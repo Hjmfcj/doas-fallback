@@ -4,165 +4,284 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>DOAS - Distribution Manager</title>
+<title>DOAS</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --fg:#1b2430; --muted:#5d6b7c; --line:#dde2e8; --accent:#7a1f5c; --ok:#18794e; --warn:#b25e09; --err:#b3261e; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212a; --fg:#e8ecf1; --muted:#95a1b0; --line:#2c3541; --accent:#d77ab8; --ok:#4cc38a; --warn:#f0a050; --err:#ff8a80; color-scheme: dark; } }
-  * { box-sizing: border-box; }
-  body { margin:0; font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
-  header { background:var(--accent); color:#fff; padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  header h1 { font-size:17px; margin:0; flex:1; }
-  header .who { font-size:13px; opacity:.9; }
-  .banner { background:#fff3cd; color:#5c4400; padding:6px 16px; font-size:13px; border-bottom:1px solid #e6d28a; }
-  main { max-width:1000px; margin:0 auto; padding:16px; }
-  nav { display:flex; gap:8px; margin-bottom:12px; }
-  nav button { border:1px solid var(--line); background:var(--card); color:var(--fg); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
-  nav button[aria-selected="true"] { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; overflow-x:auto; }
-  table { border-collapse:collapse; width:100%; min-width:520px; }
-  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
-  tr.click { cursor:pointer; } tr.click:hover { background:var(--bg); }
-  td.num, th.num { text-align:right; }
-  button.act { border:1px solid var(--accent); background:transparent; color:var(--accent); padding:4px 10px; border-radius:6px; cursor:pointer; font:inherit; font-size:13px; margin-right:6px; }
-  button.act:disabled { opacity:.5; cursor:default; }
-  button.primary { border:0; background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; cursor:pointer; font:inherit; }
-  input { width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit; }
-  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
-  .login { max-width:380px; margin:48px auto; }
-  .msg { margin:10px 0; font-size:14px; } .msg.err { color:var(--err); } .msg.ok { color:var(--ok); }
-  .empty { color:var(--muted); padding:18px 4px; }
-  .back { background:none; border:0; color:var(--accent); cursor:pointer; padding:0 0 10px; font:inherit; }
+  /* Look taken from the delivery team's DOAS app (Power Apps): burgundy primary, grey sidebar, white rounded panel, pill statuses. */
+  :root { --primary:#8d0053; --primary-d:#74002b; --brand:#97085a; --side:#f5f5f5; --active:#e8e8e8; --panel:#fff; --line:#e3e3e3; --fg:#242424; --muted:#707070; --avatar:#eddce2;
+          --ok-bg:#daefe6; --ok:#1c6b45; --err-bg:#fbe7e6; --err:#a1262b; --warn-bg:#fdf0d5; --warn:#8a5a00; --info-bg:#e6eaf2; --info:#3b4a68; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; font:13px/1.4 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; background:var(--side); color:var(--fg); }
+  #shell { display:flex; min-height:100vh; }
+  aside { width:183px; flex:none; background:var(--side); display:flex; flex-direction:column; padding:10px 8px; position:sticky; top:0; height:100vh; }
+  .brand { display:flex; gap:10px; align-items:center; padding:2px 4px 12px; }
+  .brand .logo { width:26px; height:26px; border-radius:4px; background:var(--brand); color:#fff; font-weight:600; display:grid; place-items:center; }
+  .brand b { display:block; font-size:13px; } .brand small { color:var(--muted); font-size:11px; }
+  nav a { display:flex; gap:10px; align-items:center; padding:7px 8px; border-radius:4px; color:var(--fg); cursor:pointer; margin-bottom:3px; }
+  nav a .ic { width:16px; text-align:center; color:var(--muted); }
+  nav a[aria-current="page"] { background:var(--active); }
+  .user { margin-top:auto; display:flex; gap:10px; align-items:center; padding:8px 4px; border-top:1px solid var(--line); }
+  .avatar { width:26px; height:26px; border-radius:50%; background:var(--avatar); color:var(--brand); display:grid; place-items:center; font-size:11px; font-weight:600; flex:none; }
+  .user .nm { font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:115px; } .user small { color:var(--muted); font-size:11px; display:block; }
+  .user button { background:none; border:0; color:var(--primary); cursor:pointer; padding:0; font:inherit; font-size:11px; }
+  main { flex:1; min-width:0; padding:8px 8px 8px 0; }
+  .panel { background:var(--panel); border-radius:8px; border:1px solid var(--line); min-height:calc(100vh - 16px); display:flex; flex-direction:column; }
+  .head { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--line); min-height:52px; }
+  .head h1 { font-size:14px; font-weight:600; margin:0; flex:1; }
+  .crumb { color:var(--muted); } .crumb a { cursor:pointer; } .crumb b { color:var(--fg); font-weight:400; }
+  .body { padding:12px 16px; flex:1; display:flex; flex-direction:column; gap:10px; min-width:0; }
+  .tools { display:flex; gap:10px; flex-wrap:wrap; }
+  input[type=text], input[type=email], input[type=password], select { height:32px; padding:0 10px; border:1px solid var(--line); border-radius:4px; background:#fff; color:var(--fg); font:inherit; }
+  .tools input { flex:1; min-width:200px; }
+  .tbl { border:1px solid var(--line); border-radius:6px; overflow:auto; flex:1; display:flex; flex-direction:column; }
+  table { border-collapse:collapse; width:100%; }
+  th { text-align:left; font-weight:400; color:var(--muted); font-size:11px; padding:10px 14px; white-space:nowrap; border-bottom:1px solid var(--line); }
+  td { padding:11px 14px; border-bottom:1px solid #f1f1f1; white-space:nowrap; }
+  td.id { font-weight:600; } td.num, th.num { text-align:right; } td.dim { color:var(--muted); } td.wrap { white-space:normal; min-width:260px; }
+  tr.click { cursor:pointer; } tr.click:hover td { background:#fafafa; }
+  .empty { color:var(--muted); text-align:center; padding:22px 0; }
+  .foot { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; color:var(--muted); font-size:12px; margin-top:auto; }
+  .btn { height:30px; padding:0 14px; border-radius:4px; border:1px solid #c8c8c8; background:#fff; color:var(--fg); cursor:pointer; font:inherit; font-weight:600; font-size:12px; }
+  .btn.primary { background:var(--primary); border-color:var(--primary); color:#fff; } .btn.primary:hover { background:var(--primary-d); }
+  .btn:disabled { opacity:.45; cursor:default; }
+  .btn.sm { height:26px; padding:0 12px; }
+  .pill { display:inline-block; padding:2px 11px; border-radius:99px; font-size:11px; font-weight:600; }
+  .pill.ok { background:var(--ok-bg); color:var(--ok); } .pill.err { background:var(--err-bg); color:var(--err); } .pill.warn { background:var(--warn-bg); color:var(--warn); } .pill.info { background:var(--info-bg); color:var(--info); }
+  .act { display:flex; gap:8px; justify-content:flex-end; }
+  .msg { font-size:12px; min-height:16px; } .msg.err { color:var(--err); } .msg.ok { color:var(--ok); }
+  h2.sec { font-size:12px; font-weight:600; margin:6px 0 0; }
+  .drop { border:1px dashed #cfcfcf; border-radius:14px; background:#fafafa; max-width:700px; width:100%; margin:8px auto; padding:36px 24px; text-align:center; }
+  .drop .ico { font-size:26px; color:#a77f97; } .drop h3 { margin:8px 0 2px; font-size:13px; } .drop p { margin:0 0 18px; color:var(--muted); font-size:11px; }
+  .note { background:#fafafa; border:1px solid var(--line); border-radius:6px; padding:10px 12px; color:var(--muted); font-size:12px; text-align:left; }
+  .login { max-width:360px; margin:12vh auto; background:#fff; border:1px solid var(--line); border-radius:8px; padding:24px; }
+  .login label { display:block; font-size:12px; color:var(--muted); margin:12px 0 4px; } .login input { width:100%; }
   [hidden] { display:none !important; }
+  @media (max-width: 760px) { aside { width:64px; } .brand div, nav a span.t, .user div { display:none; } .tbl { overflow:auto; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>Demand Orders Approval - Distribution Manager</h1>
-  <span class="who" id="who"></span>
-  <button class="act" id="out" hidden style="color:#fff;border-color:#fff">Sign out</button>
-</header>
-<div class="banner">Internal fallback build. Demo data only.</div>
+<div id="login" class="login" hidden>
+  <div class="brand"><div class="logo">D</div><div><b>DOAS</b><small>AstraZeneca Egypt</small></div></div>
+  <form id="lf">
+    <label for="em">Email</label><input id="em" type="email" autocomplete="username" required>
+    <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
+    <p class="msg err" id="lmsg"></p>
+    <button class="btn primary" type="submit" style="width:100%;height:34px">Sign in</button>
+  </form>
+</div>
 
-<main>
-  <section id="login" class="card login" hidden>
-    <h2 style="margin-top:0">Sign in</h2>
-    <form id="lf">
-      <label for="em">Email</label><input id="em" type="email" autocomplete="username" required>
-      <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
-      <p class="msg err" id="lmsg"></p>
-      <button class="primary" type="submit">Sign in</button>
-    </form>
-  </section>
-
-  <section id="app" hidden>
-    <nav role="tablist">
-      <button role="tab" data-tab="drafts" aria-selected="true">Drafts</button>
-      <button role="tab" data-tab="orders" aria-selected="false">My Orders</button>
-    </nav>
-    <p class="msg" id="amsg"></p>
-    <div id="view" class="card"></div>
-  </section>
-</main>
+<div id="shell" hidden>
+  <aside>
+    <div class="brand"><div class="logo">D</div><div><b>DOAS</b><small>AstraZeneca Egypt</small></div></div>
+    <nav id="nav"></nav>
+    <div class="user"><div class="avatar" id="av"></div><div><div class="nm" id="un"></div><small id="ur"></small><button id="out">Sign out</button></div></div>
+  </aside>
+  <main><div class="panel" id="panel"></div></main>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
-const SUPABASE_URL = "https://uyamkictdpdvuejftglw.supabase.co";
-const SUPABASE_KEY = "sb_publishable_1DScXyeTpxGvv59KzhK3Gw_OR--45YD";
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = window.supabase.createClient("https://uyamkictdpdvuejftglw.supabase.co", "sb_publishable_1DScXyeTpxGvv59KzhK3Gw_OR--45YD");
 const $ = id => document.getElementById(id);
-let tab = "drafts";
+const ROLE_LABEL = { distribution_manager: "Distribution Manager", back_end_monitoring: "Back-End Monitoring", second_line_manager: "Second Line Manager", business_unit_director: "Business Unit Director", cfo: "CFO", cp: "CP", management: "Management" };
+const NAV = {
+  distribution_manager: [["orders", "My Orders", "≡"], ["returned", "Returned Orders", "↺"], ["drafts", "Drafts", "✎"]],
+  back_end_monitoring: [["be_orders", "Orders", "≡"], ["be_history", "Order History", "↺"], ["be_ref", "Reference Data", "▤"]]
+};
+let me = null, route = { page: null, args: {} };
 
 function el(tag, props, ...kids) {
   const n = document.createElement(tag);
-  for (const k in (props || {})) { if (k === "class") n.className = props[k]; else if (k.startsWith("on")) n.addEventListener(k.slice(2), props[k]); else n.setAttribute(k, props[k]); }
-  for (const c of kids) n.append(c instanceof Node ? c : document.createTextNode(c == null ? "" : String(c)));
+  for (const k in (props || {})) { const v = props[k]; if (v == null || v === false) continue; if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v); }
+  for (const c of kids.flat(Infinity)) n.append(c instanceof Node ? c : document.createTextNode(c == null ? "" : String(c)));
   return n;
 }
-const fmtDate = s => s ? new Date(s).toLocaleString() : "";
-const fmtNum = v => v == null ? "" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
-function say(text, kind) { const m = $("amsg"); m.textContent = text || ""; m.className = "msg " + (kind || ""); }
+const dt = s => s ? new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+const dtt = s => s ? new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+const num = v => v == null ? "" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const pill = (text, kind) => el("span", { class: "pill " + kind }, text);
+const checkPill = r => r ? pill(r, r === "Valid" ? "ok" : "err") : "";
+const sevPill = s => pill(s === "error" ? "Error" : s === "warning" ? "Warning" : "Information", s === "error" ? "err" : s === "warning" ? "warn" : "info");
 
-function table(cols, rows, onRow) {
-  if (!rows.length) return el("div", { class: "empty" }, "Nothing here yet.");
-  const t = el("table");
-  t.append(el("thead", null, el("tr", null, ...cols.map(c => el("th", { class: c.num ? "num" : "" }, c.label)))));
-  const b = el("tbody");
-  rows.forEach(r => {
-    const tr = el("tr", onRow ? { class: "click" } : null, ...cols.map(c => {
-      const v = c.render ? c.render(r) : r[c.key];
-      return el("td", { class: c.num ? "num" : "" }, v);
-    }));
-    if (onRow) tr.addEventListener("click", () => onRow(r));
-    b.append(tr);
-  });
-  t.append(b); return t;
+function go(page, args) { route = { page, args: args || {} }; draw(); }
+
+/* ---------- generic list page: title, optional action, search, table, paging ---------- */
+function listPage({ title, action, cols, rows, search, searchHint, onRow, empty }) {
+  const PAGE = 10; let page = 0, q = "";
+  const tbody = el("tbody"), pageLbl = el("span"), prev = el("button", { class: "btn sm", disabled: true }, "‹ Previous"), next = el("button", { class: "btn sm" }, "Next ›");
+  function paint() {
+    const f = q ? rows.filter(r => search(r).toLowerCase().includes(q)) : rows;
+    const last = Math.max(0, Math.ceil(f.length / PAGE) - 1); if (page > last) page = last;
+    tbody.replaceChildren(...(f.length ? f.slice(page * PAGE, page * PAGE + PAGE).map(r => {
+      const tr = el("tr", { class: onRow ? "click" : "" }, cols.map(c => el("td", { class: [c.cls, c.num ? "num" : ""].join(" ") }, c.f(r))));
+      if (onRow) tr.addEventListener("click", () => onRow(r)); return tr; }) : [el("tr", null, el("td", { colspan: cols.length, class: "empty" }, empty))]));
+    pageLbl.textContent = "Page " + (page + 1); prev.disabled = page === 0; next.disabled = page >= last;
+  }
+  prev.addEventListener("click", () => { page--; paint(); }); next.addEventListener("click", () => { page++; paint(); });
+  const box = el("input", { type: "text", placeholder: searchHint });
+  box.addEventListener("input", () => { q = box.value.trim().toLowerCase(); page = 0; paint(); });
+  paint();
+  return [
+    el("div", { class: "head" }, el("h1", null, title), action || ""),
+    el("div", { class: "body" }, el("div", { class: "tools" }, box), el("div", { class: "msg", id: "msg" }),
+      el("div", { class: "tbl" }, el("table", null, el("thead", null, el("tr", null, cols.map(c => el("th", { class: c.num ? "num" : "" }, c.h)))), tbody), el("div", { class: "foot" }, pageLbl, el("div", { class: "act" }, prev, next))))
+  ];
 }
+const say = (t, k) => { const m = $("msg"); if (m) { m.textContent = t || ""; m.className = "msg " + (k || ""); } };
+const crumbs = (...parts) => el("h1", { class: "crumb" }, parts.map((p, i) => [i ? " / " : "", p.go ? el("a", { onclick: () => go(p.go) }, p.t) : el("b", null, p.t)]));
 
-async function showDrafts() {
-  say("");
-  const { data, error } = await sb.from("my_drafts").select("*").order("date_saved", { ascending: false });
-  if (error) return say(error.message, "err");
-  const act = (r) => {
-    const w = el("span");
-    const check = el("button", { class: "act" }, "Run check");
-    const sub = el("button", { class: "act" }, "Submit");
-    check.addEventListener("click", async () => {
-      check.disabled = true;
-      const { data: res, error: e } = await sb.rpc("run_file_check", { p_order_id: r.order_id });
-      if (e) say(e.message, "err"); else say("File check result: " + res, res === "Valid" ? "ok" : "err");
-      showDrafts();
-    });
-    sub.addEventListener("click", async () => {
-      sub.disabled = true;
-      const { error: e } = await sb.rpc("submit_order", { p_order_id: r.order_id });
-      if (e) { say(e.message, "err"); sub.disabled = false; } else { say("Submitted.", "ok"); showDrafts(); }
-    });
-    w.append(check, sub); return w;
-  };
-  $("view").replaceChildren(table(
-    [{ label: "File", key: "file_name" }, { label: "Date saved", render: r => fmtDate(r.date_saved) }, { label: "Status", key: "status" }, { label: "", render: act }],
-    data));
-}
-
-async function showOrders() {
-  say("");
+/* ---------- Distribution Manager ---------- */
+async function pOrders() {
   const { data, error } = await sb.from("my_orders").select("*").order("arrived_at", { ascending: false });
-  if (error) return say(error.message, "err");
-  $("view").replaceChildren(table(
-    [{ label: "Order", key: "order_no" }, { label: "File", key: "file_name" }, { label: "Customer", key: "customer" }, { label: "Distributor", key: "distributor" },
-     { label: "Products", key: "products", num: true }, { label: "Arrived", render: r => fmtDate(r.arrived_at) }],
-    data, r => showDetail(r)));
+  if (error) return fail(error);
+  return listPage({ title: "My orders", action: el("button", { class: "btn primary", onclick: () => go("upload") }, "Upload order"),
+    cols: [{ h: "Order", f: r => r.order_no, cls: "id" }, { h: "Customer", f: r => r.customer }, { h: "Distributor", f: r => r.distributor }, { h: "Products", f: r => r.products, num: true }, { h: "Arrived", f: r => dt(r.arrived_at), cls: "dim" }],
+    rows: data, search: r => [r.order_no, r.customer, r.distributor, r.file_name].join(" "), searchHint: "Search by order, customer or code...",
+    onRow: r => go("order", { id: r.order_id, no: r.order_no, back: "orders" }), empty: "No orders found." });
+}
+async function pReturned() {
+  return listPage({ title: "Returned Orders", action: el("button", { class: "btn primary", onclick: () => go("upload") }, "Upload order"),
+    cols: [{ h: "Order", f: r => r.a }, { h: "Customer", f: r => r.b }, { h: "Returned Items", f: r => r.c }, { h: "Reason", f: r => r.d }], rows: [], search: () => "", searchHint: "Search by order, customer or code...",
+    empty: "No returned orders." });
+}
+async function pDrafts() {
+  const { data, error } = await sb.from("my_drafts").select("*").order("date_saved", { ascending: false });
+  if (error) return fail(error);
+  const nos = await orderNos(data.map(d => d.order_id));
+  data.forEach(d => d.no = nos[d.order_id]);
+  return listPage({ title: "Drafts", action: el("button", { class: "btn primary", onclick: () => go("upload") }, "Upload order"),
+    cols: [{ h: "Order", f: r => r.no, cls: "id" }, { h: "File", f: r => r.file_name }, { h: "Saved", f: r => dt(r.date_saved), cls: "dim" }, { h: "Status", f: r => checkPill(r.status) },
+           { h: "", f: r => el("div", { class: "act" }, el("button", { class: "btn primary sm", onclick: e => { e.stopPropagation(); go("draft", { id: r.order_id, no: r.no }); } }, "View")) }],
+    rows: data, search: r => [r.no, r.file_name].join(" "), searchHint: "Search by order or file name...", empty: "No drafts." });
+}
+async function orderNos(ids) {
+  if (!ids.length) return {}; const { data } = await sb.from("orders").select("id, order_no").in("id", ids);
+  return Object.fromEntries((data || []).map(o => [o.id, o.order_no]));
+}
+function pUpload() {
+  return [el("div", { class: "head" }, el("h1", { class: "crumb" }, el("a", { onclick: () => go("orders") }, "My orders"), " / ", el("b", null, "Submit order"))),
+    el("div", { class: "body" }, el("div", { class: "drop" }, el("div", { class: "ico" }, "⊕"), el("h3", null, "Upload the order file"), el("p", null, "Drop the file here. The file is checked before it can be submitted."),
+      el("button", { class: "btn primary", disabled: true }, "Choose file (.xlsx)")),
+      el("div", { class: "note", style: "max-width:700px;margin:0 auto" }, "File upload is not built yet. Two points in the requirements are still open: which column identifies the product on an order line (the BRD says product code, the template has the name only), and the required cells and file structure for each customer type."))];
+}
+const issueTable = (issues, rowOf) => issues.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null,
+  el("thead", null, el("tr", null, ["Row", "Rule", "Level", "Message"].map(h => el("th", null, h)))),
+  el("tbody", null, issues.map(i => el("tr", null, el("td", { class: "dim" }, rowOf(i)), el("td", { class: "id" }, i.rule_id), el("td", null, sevPill(i.severity)), el("td", { class: "wrap" }, i.message)))))) : el("div", { class: "note" }, "No check messages.");
+const linesTable = (lines) => el("div", { class: "tbl", style: "flex:none" }, el("table", null,
+  el("thead", null, el("tr", null, [["Row"], ["Customer"], ["Distributor"], ["Product"], ["Quantity", 1], ["Value", 1], ["Status"]].map(([h, n]) => el("th", { class: n ? "num" : "" }, h)))),
+  el("tbody", null, lines.map(l => el("tr", null, el("td", { class: "dim" }, l.file_row), el("td", null, l.customer), el("td", null, l.distributor), el("td", null, l.product),
+    el("td", { class: "num" }, num(l.quantity)), el("td", { class: "num" }, num(l.value)), el("td", null, l.status || ""))))));
+
+async function loadIssues(orderId, fileId, lineIds) {
+  const a = await sb.from("line_issue").select("rule_id, severity, message, line_id, file_id").eq("file_id", fileId);
+  const b = lineIds.length ? await sb.from("line_issue").select("rule_id, severity, message, line_id, file_id").in("line_id", lineIds) : { data: [] };
+  return [...(a.data || []), ...(b.data || [])];
+}
+async function pOrder() {
+  const { id, no, back } = route.args;
+  const { data: lines, error } = await sb.from("my_order_lines").select("*").eq("order_id", id).order("file_row");
+  if (error) return fail(error);
+  const { data: o } = await sb.from("orders").select("file_id").eq("id", id).single();
+  const rowOf = Object.fromEntries((await sb.from("order_line").select("id, file_row").eq("order_id", id)).data?.map(r => [r.id, r.file_row]) || []);
+  const issues = o ? await loadIssues(id, o.file_id, Object.keys(rowOf)) : [];
+  return [el("div", { class: "head" }, crumbs({ t: "My orders", go: back || "orders" }, { t: "Order " + (no ?? "") })),
+    el("div", { class: "body" }, el("h2", { class: "sec" }, "Products"), linesTable(lines), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
+}
+async function pDraft() {
+  const { id, no } = route.args;
+  const { data: raw, error } = await sb.from("order_line").select("id, file_row, distributor, customer_key_entered, product_code_entered, requested_quantity, pharmacy_price, status, customer:customer(name, customer_type), product:product(name)").eq("order_id", id).order("file_row");
+  if (error) return fail(error);
+  const lines = raw.map(l => ({ file_row: l.file_row, customer: l.customer?.name || l.customer_key_entered, distributor: l.distributor, product: l.product?.name || l.product_code_entered,
+    quantity: l.requested_quantity, value: l.customer?.customer_type === "grouped_chain" ? l.requested_quantity * l.pharmacy_price : null, status: l.status }));
+  const { data: o } = await sb.from("orders").select("file_id, file:order_file(check_result, uploaded_name)").eq("id", id).single();
+  const rowOf = Object.fromEntries(raw.map(r => [r.id, r.file_row]));
+  const issues = await loadIssues(id, o.file_id, raw.map(r => r.id));
+  const check = el("button", { class: "btn" }, "Run check"), submit = el("button", { class: "btn primary", disabled: o.file.check_result !== "Valid" }, "Submit");
+  check.addEventListener("click", async () => { check.disabled = true; const { data: r, error: e } = await sb.rpc("run_file_check", { p_order_id: id }); if (e) { say(e.message, "err"); check.disabled = false; } else go("draft", route.args); });
+  submit.addEventListener("click", async () => { submit.disabled = true; const { error: e } = await sb.rpc("submit_order", { p_order_id: id }); if (e) { say(e.message, "err"); submit.disabled = false; } else go("orders"); });
+  return [el("div", { class: "head" }, crumbs({ t: "Drafts", go: "drafts" }, { t: "Order " + (no ?? "") }), checkPill(o.file.check_result), check, submit),
+    el("div", { class: "body" }, el("div", { class: "msg", id: "msg" }), el("div", { class: "dim" }, o.file.uploaded_name), el("h2", { class: "sec" }, "Products"), linesTable(lines), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
 }
 
-async function showDetail(o) {
-  const { data, error } = await sb.from("my_order_lines").select("*").eq("order_id", o.order_id).order("file_row");
-  if (error) return say(error.message, "err");
-  const back = el("button", { class: "back" }, "< Back to My Orders");
-  back.addEventListener("click", showOrders);
-  $("view").replaceChildren(back, el("h3", { style: "margin:0 0 10px" }, "Order " + (o.order_no ?? "") + " - " + (o.file_name ?? "")),
-    table([{ label: "Row", key: "file_row", num: true }, { label: "Customer", key: "customer" }, { label: "Distributor", key: "distributor" }, { label: "Product", key: "product" },
-           { label: "Quantity", render: r => fmtNum(r.quantity), num: true }, { label: "Value", render: r => fmtNum(r.value), num: true }, { label: "Status", key: "status" }], data));
+/* ---------- Back-End Monitoring ---------- */
+async function pBeOrders() {
+  const { data, error } = await sb.from("orders").select("id, order_no, arrived_at, creator:app_user(display_name), file:order_file!inner(uploaded_name, state), lines:order_line(count)").eq("file.state", "submitted").order("arrived_at", { ascending: false });
+  if (error) return fail(error);
+  const cap = await sb.from("line_issue").select("line:order_line!inner(order_id)").eq("rule_id", "V-05");
+  const above = new Set((cap.data || []).map(r => r.line.order_id));
+  return listPage({ title: "Orders", cols: [{ h: "Order", f: r => r.order_no, cls: "id" }, { h: "File", f: r => r.file.uploaded_name }, { h: "Distribution Manager", f: r => r.creator?.display_name || "" },
+      { h: "Lines", f: r => r.lines[0]?.count ?? 0, num: true }, { h: "Above cap (V-05)", f: r => above.has(r.id) ? pill("Yes", "warn") : pill("No", "info") }, { h: "Arrived", f: r => dt(r.arrived_at), cls: "dim" }],
+    rows: data, search: r => [r.order_no, r.file.uploaded_name, r.creator?.display_name].join(" "), searchHint: "Search by order, file or Distribution Manager...",
+    onRow: r => go("be_order", { id: r.id, no: r.order_no }), empty: "No submitted orders." });
+}
+async function pBeOrder() {
+  const { id, no } = route.args;
+  const { data: raw, error } = await sb.from("order_line").select("id, file_row, distributor, customer_key_entered, product_code_entered, requested_quantity, pharmacy_price, earlier_orders_quantity, status, customer:customer(name, customer_type), product:product(name)").eq("order_id", id).order("file_row");
+  if (error) return fail(error);
+  const lines = raw.map(l => ({ file_row: l.file_row, customer: l.customer?.name || l.customer_key_entered, distributor: l.distributor, product: l.product?.name || l.product_code_entered,
+    quantity: l.requested_quantity, value: l.customer?.customer_type === "grouped_chain" ? l.requested_quantity * l.pharmacy_price : null, status: l.status }));
+  const { data: o } = await sb.from("orders").select("file_id, arrived_at, creator:app_user(display_name), file:order_file(uploaded_name, upload_type)").eq("id", id).single();
+  const rowOf = Object.fromEntries(raw.map(r => [r.id, r.file_row]));
+  const issues = await loadIssues(id, o.file_id, raw.map(r => r.id));
+  const hist = (await sb.from("action_log").select("*").eq("order_id", id).order("at")).data || [];
+  return [el("div", { class: "head" }, crumbs({ t: "Orders", go: "be_orders" }, { t: "Order " + (no ?? "") })),
+    el("div", { class: "body" }, el("div", { class: "dim" }, [o.file.uploaded_name, " · ", o.creator?.display_name || "", " · arrived ", dtt(o.arrived_at)].join("")),
+      el("h2", { class: "sec" }, "Products"), linesTable(lines), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"),
+      el("h2", { class: "sec" }, "History"), histTable(hist))];
+}
+const histTable = h => h.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["When", "Action", "Role", "Detail"].map(x => el("th", null, x)))),
+  el("tbody", null, h.map(r => el("tr", null, el("td", { class: "dim" }, dtt(r.at)), el("td", { class: "id" }, r.action), el("td", null, ROLE_LABEL[r.actor_role] || r.actor_role), el("td", null, r.detail || "")))))) : el("div", { class: "note" }, "No actions recorded for this order.");
+async function pBeHistory() {
+  const { data, error } = await sb.from("action_log").select("*, order:orders(order_no)").order("at", { ascending: false }).limit(200);
+  if (error) return fail(error);
+  return listPage({ title: "Order History", cols: [{ h: "When", f: r => dtt(r.at), cls: "dim" }, { h: "Order", f: r => r.order?.order_no ?? "", cls: "id" }, { h: "Action", f: r => r.action }, { h: "Role", f: r => ROLE_LABEL[r.actor_role] || r.actor_role }, { h: "Detail", f: r => r.detail || "" }],
+    rows: data, search: r => [r.order?.order_no, r.action, r.detail].join(" "), searchHint: "Search by order, action or detail...", empty: "No actions recorded yet." });
+}
+const REF = [["cap", "Caps", "*, product(name)"], ["product_growth", "Allowed growth", "*, product(name)"], ["guided_value", "Guided Value", "*"], ["product_map", "Product map", "*, product(name)"], ["approver", "Approvers", "*"],
+  ["special_case", "Special-case accounts", "*, customer(name)"], ["blacklist", "Blacklist", "*, customer(name)"], ["bulk_purchase", "Bulk-purchase list", "*, customer(name), product(name)"], ["concern_type", "Concern types", "*"],
+  ["holiday", "Holidays", "*"], ["stock_sales_out", "Stock and sales-out", "*, customer(name), product(name)"], ["customer", "Customers", "*"], ["product", "Products", "*"]];
+async function pBeRef() {
+  const t = route.args.t || "cap";
+  const { data, error } = await sb.from(t).select(REF.find(r => r[0] === t)[2]).limit(500);
+  if (error) return fail(error);
+  const keys = data.length ? Object.keys(data[0]).filter(k => !["id", "created_at", "demo"].includes(k) && !k.endsWith("_id")) : [];
+  data.forEach(r => keys.forEach(k => { if (r[k] && typeof r[k] === "object") r[k] = r[k].name; }));
+  const sel = el("select", null, REF.map(([v, l]) => el("option", { value: v, selected: v === t }, l)));
+  sel.addEventListener("change", () => go("be_ref", { t: sel.value }));
+  const body = listPage({ title: "Reference Data", cols: keys.map(k => ({ h: k.replace(/_/g, " "), f: r => r[k] == null ? "" : String(r[k]) })), rows: data, search: r => Object.values(r).join(" "), searchHint: "Search...", empty: "No rows." });
+  body[0].querySelector("h1").after(sel); body[1].insertBefore(el("div", { class: "note" }, "Read-only for now. Editing these tables (FR-42) is not built yet."), body[1].firstChild);
+  return body;
 }
 
-function render() {
-  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-  (tab === "drafts" ? showDrafts : showOrders)();
+const PAGES = { orders: pOrders, returned: pReturned, drafts: pDrafts, upload: pUpload, order: pOrder, draft: pDraft, be_orders: pBeOrders, be_order: pBeOrder, be_history: pBeHistory, be_ref: pBeRef };
+const fail = e => [el("div", { class: "head" }, el("h1", null, "Something went wrong")), el("div", { class: "body" }, el("div", { class: "msg err" }, e.message))];
+
+async function draw() {
+  const items = NAV[me.role] || [];
+  const parent = { order: "orders", draft: "drafts", upload: "orders", be_order: "be_orders" }[route.page] || route.page;
+  $("nav").replaceChildren(...items.map(([k, l, ic]) => el("a", { "aria-current": k === parent ? "page" : null, onclick: () => go(k) }, el("span", { class: "ic" }, ic), el("span", { class: "t" }, l))));
+  const panel = $("panel");
+  if (!items.length) { panel.replaceChildren(el("div", { class: "head" }, el("h1", null, "No screens for this role yet")), el("div", { class: "body" }, el("div", { class: "note" }, "This role has no screens in this build."))); return; }
+  panel.replaceChildren(el("div", { class: "body" }, el("div", { class: "empty" }, "Loading...")));
+  try { panel.replaceChildren(...await PAGES[route.page]()); } catch (e) { panel.replaceChildren(...fail(e)); }
 }
-document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
 
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
-  $("login").hidden = !!session; $("app").hidden = !session; $("out").hidden = !session;
-  $("who").textContent = session ? session.user.email : "";
-  if (session) render();
+  $("login").hidden = !!session; $("shell").hidden = !session;
+  if (!session) return;
+  const { data: u, error } = await sb.from("app_user").select("display_name, role").eq("id", session.user.id).maybeSingle();
+  me = u ? { ...u } : { display_name: session.user.email, role: null };
+  $("un").textContent = me.display_name; $("ur").textContent = ROLE_LABEL[me.role] || "No role assigned";
+  $("av").textContent = me.display_name.split(/\s+/).filter(w => /^[A-Za-z]/.test(w)).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+  go(NAV[me.role] ? NAV[me.role][0][0] : "none");
 }
 $("lf").addEventListener("submit", async e => {
   e.preventDefault(); $("lmsg").textContent = "";
   const { error } = await sb.auth.signInWithPassword({ email: $("em").value.trim(), password: $("pw").value });
   if (error) $("lmsg").textContent = error.message; else { $("pw").value = ""; boot(); }
 });
-$("out").addEventListener("click", async () => { await sb.auth.signOut(); boot(); });
+$("out").addEventListener("click", async () => { await sb.auth.signOut(); me = null; boot(); });
 boot();
 </script>
 </body>
