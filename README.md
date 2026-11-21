@@ -7,8 +7,9 @@ AstraZeneca DOAS (Demand Orders Approval System): a parallel, production-grade b
 Source of requirements: Business Requirements Document v1.3 (18-Nov-2026). Anything the document does not state is not built. Open points are tracked in the Enterprise Portfolio Studio repository (`10_Product_Build`), which stays the source of truth for requirements, decisions and evidence.
 
 ## Layout
-- `supabase/migrations/` schema, row-level security and functions. Every change is a migration file; the file name carries the version Supabase recorded.
-- `supabase/tests/` access and audit tests. Each test ends in a rollback, so it can be run on the live project without leaving data.
+- `supabase/migrations/` schema, row-level security, functions and views. Every change is a migration file; the file name carries the version Supabase recorded. Exception: `20261121165400_file_check.sql` was applied through the SQL editor, so Supabase's migration history does not list it; its version number was chosen to sit before the next recorded one.
+- `supabase/seed/` demo seed and its removal script. Synthetic rows only, all marked `demo = true`; not a migration, run on demand.
+- `supabase/tests/` access, audit, file-check and view tests. Each test ends in a rollback, so it can be run on the live project without leaving data.
 
 ## Rules for this repository
 - Synthetic or demo data only, marked `demo = true`. No real client data is committed.
@@ -16,4 +17,4 @@ Source of requirements: Business Requirements Document v1.3 (18-Nov-2026). Anyth
 - Every push to `main` is approved by the owner.
 
 ## State (21-Nov-2026)
-Slice 1: reference-data tables (empty), users, order files, orders, lines, check issues, insert-only audit log, row-level security, `submit_order`. Front end and hosting: not started.
+Slice 1: reference-data tables (demo seed loaded), users, order files, orders, lines, check issues, insert-only audit log, row-level security, `submit_order`, the file check `run_file_check` (V-01, V-04, V-05, V-06, V-08, V-12), and read views for Drafts, My Orders and order detail. Not coded because the requirements do not say enough: V-02, V-03, the product key on an order line, the blacklist match key. Front end and hosting: not started.
