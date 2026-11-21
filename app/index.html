@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>DOAS - Distribution Manager</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1b2430; --muted:#5d6b7c; --line:#dde2e8; --accent:#7a1f5c; --ok:#18794e; --warn:#b25e09; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212a; --fg:#e8ecf1; --muted:#95a1b0; --line:#2c3541; --accent:#d77ab8; --ok:#4cc38a; --warn:#f0a050; --err:#ff8a80; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { background:var(--accent); color:#fff; padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  header .who { font-size:13px; opacity:.9; }
+  .banner { background:#fff3cd; color:#5c4400; padding:6px 16px; font-size:13px; border-bottom:1px solid #e6d28a; }
+  main { max-width:1000px; margin:0 auto; padding:16px; }
+  nav { display:flex; gap:8px; margin-bottom:12px; }
+  nav button { border:1px solid var(--line); background:var(--card); color:var(--fg); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
+  nav button[aria-selected="true"] { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; min-width:520px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  tr.click { cursor:pointer; } tr.click:hover { background:var(--bg); }
+  td.num, th.num { text-align:right; }
+  button.act { border:1px solid var(--accent); background:transparent; color:var(--accent); padding:4px 10px; border-radius:6px; cursor:pointer; font:inherit; font-size:13px; margin-right:6px; }
+  button.act:disabled { opacity:.5; cursor:default; }
+  button.primary { border:0; background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; cursor:pointer; font:inherit; }
+  input { width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  .login { max-width:380px; margin:48px auto; }
+  .msg { margin:10px 0; font-size:14px; } .msg.err { color:var(--err); } .msg.ok { color:var(--ok); }
+  .empty { color:var(--muted); padding:18px 4px; }
+  .back { background:none; border:0; color:var(--accent); cursor:pointer; padding:0 0 10px; font:inherit; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Demand Orders Approval - Distribution Manager</h1>
+  <span class="who" id="who"></span>
+  <button class="act" id="out" hidden style="color:#fff;border-color:#fff">Sign out</button>
+</header>
+<div class="banner">Internal fallback build. Demo data only.</div>
+
+<main>
+  <section id="login" class="card login" hidden>
+    <h2 style="margin-top:0">Sign in</h2>
+    <form id="lf">
+      <label for="em">Email</label><input id="em" type="email" autocomplete="username" required>
+      <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
+      <p class="msg err" id="lmsg"></p>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <section id="app" hidden>
+    <nav role="tablist">
+      <button role="tab" data-tab="drafts" aria-selected="true">Drafts</button>
+      <button role="tab" data-tab="orders" aria-selected="false">My Orders</button>
+    </nav>
+    <p class="msg" id="amsg"></p>
+    <div id="view" class="card"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = "https://uyamkictdpdvuejftglw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_1DScXyeTpxGvv59KzhK3Gw_OR--45YD";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+let tab = "drafts";
+
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const k in (props || {})) { if (k === "class") n.className = props[k]; else if (k.startsWith("on")) n.addEventListener(k.slice(2), props[k]); else n.setAttribute(k, props[k]); }
+  for (const c of kids) n.append(c instanceof Node ? c : document.createTextNode(c == null ? "" : String(c)));
+  return n;
+}
+const fmtDate = s => s ? new Date(s).toLocaleString() : "";
+const fmtNum = v => v == null ? "" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+function say(text, kind) { const m = $("amsg"); m.textContent = text || ""; m.className = "msg " + (kind || ""); }
+
+function table(cols, rows, onRow) {
+  if (!rows.length) return el("div", { class: "empty" }, "Nothing here yet.");
+  const t = el("table");
+  t.append(el("thead", null, el("tr", null, ...cols.map(c => el("th", { class: c.num ? "num" : "" }, c.label)))));
+  const b = el("tbody");
+  rows.forEach(r => {
+    const tr = el("tr", onRow ? { class: "click" } : null, ...cols.map(c => {
+      const v = c.render ? c.render(r) : r[c.key];
+      return el("td", { class: c.num ? "num" : "" }, v);
+    }));
+    if (onRow) tr.addEventListener("click", () => onRow(r));
+    b.append(tr);
+  });
+  t.append(b); return t;
+}
+
+async function showDrafts() {
+  say("");
+  const { data, error } = await sb.from("my_drafts").select("*").order("date_saved", { ascending: false });
+  if (error) return say(error.message, "err");
+  const act = (r) => {
+    const w = el("span");
+    const check = el("button", { class: "act" }, "Run check");
+    const sub = el("button", { class: "act" }, "Submit");
+    check.addEventListener("click", async () => {
+      check.disabled = true;
+      const { data: res, error: e } = await sb.rpc("run_file_check", { p_order_id: r.order_id });
+      if (e) say(e.message, "err"); else say("File check result: " + res, res === "Valid" ? "ok" : "err");
+      showDrafts();
+    });
+    sub.addEventListener("click", async () => {
+      sub.disabled = true;
+      const { error: e } = await sb.rpc("submit_order", { p_order_id: r.order_id });
+      if (e) { say(e.message, "err"); sub.disabled = false; } else { say("Submitted.", "ok"); showDrafts(); }
+    });
+    w.append(check, sub); return w;
+  };
+  $("view").replaceChildren(table(
+    [{ label: "File", key: "file_name" }, { label: "Date saved", render: r => fmtDate(r.date_saved) }, { label: "Status", key: "status" }, { label: "", render: act }],
+    data));
+}
+
+async function showOrders() {
+  say("");
+  const { data, error } = await sb.from("my_orders").select("*").order("arrived_at", { ascending: false });
+  if (error) return say(error.message, "err");
+  $("view").replaceChildren(table(
+    [{ label: "Order", key: "order_no" }, { label: "File", key: "file_name" }, { label: "Customer", key: "customer" }, { label: "Distributor", key: "distributor" },
+     { label: "Products", key: "products", num: true }, { label: "Arrived", render: r => fmtDate(r.arrived_at) }],
+    data, r => showDetail(r)));
+}
+
+async function showDetail(o) {
+  const { data, error } = await sb.from("my_order_lines").select("*").eq("order_id", o.order_id).order("file_row");
+  if (error) return say(error.message, "err");
+  const back = el("button", { class: "back" }, "< Back to My Orders");
+  back.addEventListener("click", showOrders);
+  $("view").replaceChildren(back, el("h3", { style: "margin:0 0 10px" }, "Order " + (o.order_no ?? "") + " - " + (o.file_name ?? "")),
+    table([{ label: "Row", key: "file_row", num: true }, { label: "Customer", key: "customer" }, { label: "Distributor", key: "distributor" }, { label: "Product", key: "product" },
+           { label: "Quantity", render: r => fmtNum(r.quantity), num: true }, { label: "Value", render: r => fmtNum(r.value), num: true }, { label: "Status", key: "status" }], data));
+}
+
+function render() {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  (tab === "drafts" ? showDrafts : showOrders)();
+}
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
+
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  $("login").hidden = !!session; $("app").hidden = !session; $("out").hidden = !session;
+  $("who").textContent = session ? session.user.email : "";
+  if (session) render();
+}
+$("lf").addEventListener("submit", async e => {
+  e.preventDefault(); $("lmsg").textContent = "";
+  const { error } = await sb.auth.signInWithPassword({ email: $("em").value.trim(), password: $("pw").value });
+  if (error) $("lmsg").textContent = error.message; else { $("pw").value = ""; boot(); }
+});
+$("out").addEventListener("click", async () => { await sb.auth.signOut(); boot(); });
+boot();
+</script>
+</body>
+</html>
