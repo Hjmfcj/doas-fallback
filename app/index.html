@@ -55,6 +55,13 @@
   .note { background:#fafafa; border:1px solid var(--line); border-radius:6px; padding:10px 12px; color:var(--muted); font-size:12px; text-align:left; }
   .login { max-width:360px; margin:12vh auto; background:#fff; border:1px solid var(--line); border-radius:8px; padding:24px; }
   .login label { display:block; font-size:12px; color:var(--muted); margin:12px 0 4px; } .login input { width:100%; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.35); display:grid; place-items:center; z-index:20; padding:16px; }
+  .dlg { background:#fff; border-radius:8px; padding:20px; width:100%; max-width:460px; max-height:90vh; overflow:auto; }
+  .dlg h2 { font-size:14px; margin:0 0 12px; }
+  .frm { display:flex; flex-direction:column; gap:10px; }
+  .frm label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  .frm input[type=text], .frm input[type=date], .frm select { width:100%; color:var(--fg); }
+  .frm input[type=checkbox] { width:16px; height:16px; align-self:flex-start; }
   [hidden] { display:none !important; }
   @media (max-width: 760px) { aside { width:64px; } .brand div, nav a span.t, .user div { display:none; } .tbl { overflow:auto; } }
 </style>
@@ -140,9 +147,19 @@ async function pOrders() {
     onRow: r => go("order", { id: r.order_id, no: r.order_no, back: "orders" }), empty: "No orders found." });
 }
 async function pReturned() {
+  const { data, error } = await sb.from("line_return").select("returned_by_name, returned_by_role, returned_at, reason, line:order_line(order_id, customer:customer(name), product:product(name), order:orders(order_no))").order("returned_at", { ascending: false });
+  if (error) return fail(error);
+  const groups = new Map();
+  data.forEach(r => {
+    const l = r.line; if (!l) return;
+    const k = [l.order_id, l.customer?.name, r.returned_by_name, r.reason].join("|");
+    if (!groups.has(k)) groups.set(k, { no: l.order?.order_no, customer: l.customer?.name || "", items: [], by: r.returned_by_name, role: r.returned_by_role, at: r.returned_at, reason: r.reason });
+    groups.get(k).items.push(l.product?.name || "");
+  });
+  const rows = [...groups.values()];
   return listPage({ title: "Returned Orders", action: el("button", { class: "btn primary", onclick: () => go("upload") }, "Upload order"),
-    cols: [{ h: "Order", f: r => r.a }, { h: "Customer", f: r => r.b }, { h: "Returned Items", f: r => r.c }, { h: "Reason", f: r => r.d }], rows: [], search: () => "", searchHint: "Search by order, customer or code...",
-    empty: "No returned orders." });
+    cols: [{ h: "Order", f: r => r.no, cls: "id" }, { h: "Customer", f: r => r.customer }, { h: "Returned items", f: r => r.items.join(", ") }, { h: "Returned by", f: r => r.by + " (" + (ROLE_LABEL[r.role] || r.role) + ")" }, { h: "Returned", f: r => dt(r.at), cls: "dim" }, { h: "Reason", f: r => r.reason, cls: "wrap" }],
+    rows, search: r => [r.no, r.customer, r.items.join(" "), r.by, r.reason].join(" "), searchHint: "Search by order, customer or code...", empty: "No returned orders." });
 }
 async function pDrafts() {
   const { data, error } = await sb.from("my_drafts").select("*").order("date_saved", { ascending: false });
@@ -240,16 +257,104 @@ async function pBeHistory() {
 const REF = [["cap", "Caps", "*, product(name)"], ["product_growth", "Allowed growth", "*, product(name)"], ["guided_value", "Guided Value", "*"], ["product_map", "Product map", "*, product(name)"], ["approver", "Approvers", "*"],
   ["special_case", "Special-case accounts", "*, customer(name)"], ["blacklist", "Blacklist", "*, customer(name)"], ["bulk_purchase", "Bulk-purchase list", "*, customer(name), product(name)"], ["concern_type", "Concern types", "*"],
   ["holiday", "Holidays", "*"], ["stock_sales_out", "Stock and sales-out", "*, customer(name), product(name)"], ["customer", "Customers", "*"], ["product", "Products", "*"]];
+/* Field lists follow the table columns. Type: t text, n number, i whole number, d date, b yes/no, p product, c customer, or an array of allowed values. Last item true = required. */
+const CT = ["grouped_chain", "egydrug", "independent_pharmacy", "private_hospital", "ngo"];
+const FIELDS = {
+  cap: [["product_id", "Product", "p", true], ["customer_type", "Customer type", ["independent_pharmacy", "private_hospital"], true], ["cap_quantity", "Cap quantity", "n"], ["no_capping", "No capping", "b"]],
+  product_growth: [["product_id", "Product", "p", true], ["year", "Year", "i", true], ["yearly_target", "Yearly target", "n"], ["allowed_growth_pct", "Allowed growth %", "n"], ["reference_quantity", "Reference quantity", "n"]],
+  guided_value: [["chain_name", "Chain name", "t", true], ["year", "Year", "i", true], ["guided_value_per_branch", "Guided Value per branch", "n"], ["number_of_branches", "Number of branches", "i"]],
+  product_map: [["product_id", "Product", "p", true], ["second_line_manager_name", "Second Line Manager name", "t"], ["second_line_manager_email", "Second Line Manager email", "t"], ["includes_business_unit_director", "Includes Business Unit Director", "b"], ["includes_cfo", "Includes CFO", "b"], ["includes_cp", "Includes CP", "b"]],
+  approver: [["stage", "Stage", ["business_unit_director", "cfo", "cp"], true], ["holder_name", "Holder name", "t"], ["holder_email", "Holder email", "t"], ["deputy_name", "Deputy name", "t"], ["deputy_email", "Deputy email", "t"]],
+  special_case: [["customer_id", "Customer", "c", true], ["note", "Note", "t"]],
+  blacklist: [["customer_id", "Customer (optional)", "c"], ["customer_name", "Customer name", "t", true]],
+  bulk_purchase: [["customer_id", "Customer", "c", true], ["product_id", "Product (optional)", "p"], ["flag_type", "Flag type", ["bulk_purchase", "product_interest"], true]],
+  concern_type: [["name", "Name", "t", true], ["when_used", "When used", "t"], ["sent_to", "Sent to", "t"]],
+  holiday: [["holiday_date", "Date", "d", true], ["name", "Name", "t"]],
+  stock_sales_out: [["customer_id", "Customer", "c", true], ["product_id", "Product", "p", true], ["month", "Month", "d", true], ["stock_quantity", "Stock quantity", "n"], ["sales_out_quantity", "Sales-out quantity", "n"], ["refreshed_on", "Refreshed on", "d"]],
+  customer: [["code", "Code", "t"], ["brick", "Brick", "t"], ["name", "Name", "t", true], ["customer_type", "Customer type", CT, true]],
+  product: [["code", "Code", "t", true], ["name", "Name", "t", true], ["division", "Division", "t"]]
+};
+const pretty = v => String(v).replace(/_/g, " ");
+function closeModal() { const m = document.getElementById("modal"); if (m) m.remove(); }
+function modal(title, content) {
+  closeModal();
+  const m = el("div", { id: "modal", class: "overlay" }, el("div", { class: "dlg" }, el("h2", null, title), content));
+  document.body.append(m); return m;
+}
+async function lookups() {
+  const [p, c] = await Promise.all([sb.from("product").select("id, name").order("name"), sb.from("customer").select("id, name").order("name")]);
+  return { p: p.data || [], c: c.data || [] };
+}
+function editRow(t, row, lk) {
+  const fields = FIELDS[t], inputs = {}, msg = el("div", { class: "msg err" });
+  const form = el("form", { class: "frm" });
+  fields.forEach(([col, label, type, req]) => {
+    let inp;
+    if (type === "b") inp = el("input", { type: "checkbox" });
+    else if (type === "p" || type === "c" || Array.isArray(type)) {
+      const opts = type === "p" ? lk.p.map(x => [x.id, x.name]) : type === "c" ? lk.c.map(x => [x.id, x.name]) : type.map(x => [x, pretty(x)]);
+      inp = el("select", null, el("option", { value: "" }, req ? "Select..." : "(none)"), opts.map(([v, l]) => el("option", { value: v }, l)));
+    } else inp = el("input", { type: type === "d" ? "date" : "text", inputmode: type === "n" ? "decimal" : type === "i" ? "numeric" : null });
+    const cur = row ? row[col] : null;
+    if (type === "b") inp.checked = !!cur; else if (cur != null) inp.value = String(cur);
+    inputs[col] = inp;
+    form.append(el("label", null, el("span", null, label + (req ? " *" : "")), inp));
+  });
+  const save = el("button", { class: "btn primary", type: "submit" }, "Save");
+  form.append(msg, el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), save));
+  form.addEventListener("submit", async e => {
+    e.preventDefault(); msg.textContent = ""; const out = {};
+    for (const [col, label, type, req] of fields) {
+      const inp = inputs[col];
+      if (type === "b") { out[col] = inp.checked; continue; }
+      const v = inp.value.trim();
+      if (v === "") { if (req) { msg.textContent = label + " is required."; return; } out[col] = null; continue; }
+      if (type === "n" || type === "i") {
+        const x = Number(v);
+        if (!isFinite(x) || (type === "i" && !Number.isInteger(x))) { msg.textContent = label + " must be a " + (type === "i" ? "whole " : "") + "number."; return; }
+        out[col] = x;
+      } else out[col] = v;
+    }
+    save.disabled = true;
+    const q = row ? sb.from(t).update(out).eq("id", row.id) : sb.from(t).insert(out);
+    const { error } = await q;
+    if (error) { msg.textContent = error.message; save.disabled = false; return; }
+    closeModal(); go("be_ref", { t });
+  });
+  modal((row ? "Edit" : "Add") + " - " + REF.find(r => r[0] === t)[1], form);
+}
+function deleteRow(t, row) {
+  const msg = el("div", { class: "msg err" }), del = el("button", { class: "btn primary" }, "Delete");
+  del.addEventListener("click", async () => {
+    del.disabled = true;
+    const { error } = await sb.from(t).delete().eq("id", row.id);
+    if (error) { msg.textContent = error.message; del.disabled = false; return; }
+    closeModal(); go("be_ref", { t });
+  });
+  modal("Delete this row?", el("div", null, el("p", null, "This removes the row from " + REF.find(r => r[0] === t)[1] + ". It cannot be undone."), msg,
+    el("div", { class: "act" }, el("button", { class: "btn", onclick: closeModal }, "Cancel"), del)));
+}
 async function pBeRef() {
   const t = route.args.t || "cap";
   const { data, error } = await sb.from(t).select(REF.find(r => r[0] === t)[2]).limit(500);
   if (error) return fail(error);
-  const keys = data.length ? Object.keys(data[0]).filter(k => !["id", "created_at", "demo"].includes(k) && !k.endsWith("_id")) : [];
-  data.forEach(r => keys.forEach(k => { if (r[k] && typeof r[k] === "object") r[k] = r[k].name; }));
+  const lk = await lookups();
+  const fields = FIELDS[t];
+  const show = (r, [col, , type]) => {
+    const v = r[col];
+    if (type === "p") return r.product?.name || "";
+    if (type === "c") return r.customer?.name || "";
+    if (type === "b") return v ? "Yes" : "No";
+    if (Array.isArray(type)) return v == null ? "" : pretty(v);
+    return v == null ? "" : String(v);
+  };
   const sel = el("select", null, REF.map(([v, l]) => el("option", { value: v, selected: v === t }, l)));
   sel.addEventListener("change", () => go("be_ref", { t: sel.value }));
-  const body = listPage({ title: "Reference Data", cols: keys.map(k => ({ h: k.replace(/_/g, " "), f: r => r[k] == null ? "" : String(r[k]) })), rows: data, search: r => Object.values(r).join(" "), searchHint: "Search...", empty: "No rows." });
-  body[0].querySelector("h1").after(sel); body[1].insertBefore(el("div", { class: "note" }, "Read-only for now. Editing these tables (FR-42) is not built yet."), body[1].firstChild);
+  const cols = fields.map(f => ({ h: f[1].replace(" (optional)", ""), f: r => show(r, f) }));
+  cols.push({ h: "", f: r => el("div", { class: "act" }, el("button", { class: "btn sm", onclick: () => editRow(t, r, lk) }, "Edit"), el("button", { class: "btn sm", onclick: () => deleteRow(t, r) }, "Delete")) });
+  const body = listPage({ title: "Reference Data", action: el("button", { class: "btn primary", onclick: () => editRow(t, null, lk) }, "Add row"), cols, rows: data,
+    search: r => fields.map(f => show(r, f)).join(" "), searchHint: "Search...", empty: "No rows." });
+  body[0].querySelector("h1").after(sel);
   return body;
 }
 
