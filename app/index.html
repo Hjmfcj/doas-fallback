@@ -62,6 +62,12 @@
   .frm label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
   .frm input[type=text], .frm input[type=date], .frm select { width:100%; color:var(--fg); }
   .frm input[type=checkbox] { width:16px; height:16px; align-self:flex-start; }
+  textarea { width:100%; min-height:60px; padding:6px 10px; border:1px solid var(--line); border-radius:4px; font:inherit; color:var(--fg); resize:vertical; }
+  .frm .item { border:1px solid var(--line); border-radius:6px; padding:8px 10px; background:#fafafa; }
+  .frm .item b { color:var(--fg); font-weight:600; }
+  .twocol { display:grid; grid-template-columns:1fr 1fr; gap:12px; } @media (max-width: 900px) { .twocol { grid-template-columns:1fr; } }
+  .cmt { border:1px solid var(--line); border-radius:6px; padding:8px 12px; } .cmt small { color:var(--muted); display:block; margin-bottom:2px; }
+  td.wrap { white-space:normal; min-width:220px; }
   [hidden] { display:none !important; }
   @media (max-width: 760px) { aside { width:64px; } .brand div, nav a span.t, .user div { display:none; } .tbl { overflow:auto; } }
 </style>
@@ -146,20 +152,39 @@ async function pOrders() {
     rows: data, search: r => [r.order_no, r.customer, r.distributor, r.file_name].join(" "), searchHint: "Search by order, customer or code...",
     onRow: r => go("order", { id: r.order_id, no: r.order_no, back: "orders" }), empty: "No orders found." });
 }
+/* Returned lines only: the rest of the order keeps moving through the cycle. The Distribution Manager edits the returned lines, then resubmits the order. */
 async function pReturned() {
-  const { data, error } = await sb.from("line_return").select("returned_by_name, returned_by_role, returned_at, reason, line:order_line(order_id, customer:customer(name), product:product(name), order:orders(order_no))").order("returned_at", { ascending: false });
+  const { data, error } = await sb.from("line_return").select("id, returned_by_name, returned_by_role, returned_at, reason, resolved_at, line:order_line(" + LINE_COLS + ", order_id, order:orders(order_no))").order("returned_at", { ascending: false });
   if (error) return fail(error);
-  const groups = new Map();
-  data.forEach(r => {
-    const l = r.line; if (!l) return;
-    const k = [l.order_id, l.customer?.name, r.returned_by_name, r.reason].join("|");
-    if (!groups.has(k)) groups.set(k, { no: l.order?.order_no, customer: l.customer?.name || "", items: [], by: r.returned_by_name, role: r.returned_by_role, at: r.returned_at, reason: r.reason });
-    groups.get(k).items.push(l.product?.name || "");
+  const orders = new Map();
+  data.forEach(r => { const l = r.line; if (!l) return; if (!orders.has(l.order_id)) orders.set(l.order_id, { id: l.order_id, no: l.order?.order_no, rows: [] }); orders.get(l.order_id).rows.push(r); });
+  const list = [...orders.values()].sort((a, b) => b.no - a.no);
+  const head = el("div", { class: "head" }, el("h1", null, "Returned Orders"), el("button", { class: "btn primary", onclick: () => go("upload") }, "Upload order"));
+  if (!list.length) return [head, el("div", { class: "body" }, el("div", { class: "empty" }, "No returned orders."))];
+  const sections = list.map(o => {
+    const open = o.rows.filter(r => !r.resolved_at);
+    const msg = el("div", { class: "msg" }), box = el("div");
+    const tbl = linesTable(o.rows.map(r => ({ ...mapLine(r.line), ret: r })), [
+      { h: "Returned by", f: l => l.ret.returned_by_name + " (" + (ROLE_LABEL[l.ret.returned_by_role] || l.ret.returned_by_role) + ")" },
+      { h: "Returned", f: l => dt(l.ret.returned_at), cls: "dim" },
+      { h: "Comment", f: l => l.ret.reason, cls: "wrap" },
+      { h: "Status", f: l => l.ret.resolved_at ? pill("Corrected", "ok") : pill("Waiting for you", "warn") },
+      { h: "", f: l => l.ret.resolved_at ? "" : el("button", { class: "btn sm", onclick: () => editLine(l, () => go("returned")) }, "Edit") }]);
+    const resub = el("button", { class: "btn primary", disabled: !open.length }, "Resubmit order");
+    resub.addEventListener("click", async () => {
+      resub.disabled = true; msg.textContent = ""; box.replaceChildren();
+      const { data: res, error: e } = await sb.rpc("dm_resubmit_returned", { p_order_id: o.id });
+      if (e) { msg.textContent = e.message; msg.className = "msg err"; resub.disabled = false; return; }
+      if (res === "Valid") { go("returned"); return; }
+      msg.textContent = "The order has check errors. Correct the lines and resubmit."; msg.className = "msg err"; resub.disabled = false;
+      const ids = o.rows.map(r => r.line.id), ord = (await sb.from("orders").select("file_id").eq("id", o.id).single()).data;
+      const issues = await loadIssues(o.id, ord.file_id, ids), rowOf = Object.fromEntries(o.rows.map(r => [r.line.id, r.line.file_row]));
+      box.replaceChildren(issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"));
+    });
+    return el("div", { style: "display:flex;flex-direction:column;gap:8px" }, el("h2", { class: "sec" }, "Order " + o.no + (open.length ? "  -  " + open.length + " line(s) waiting for you" : "")), tbl,
+      el("div", { class: "act", style: "justify-content:space-between;align-items:center" }, msg, resub), box);
   });
-  const rows = [...groups.values()];
-  return listPage({ title: "Returned Orders", action: el("button", { class: "btn primary", onclick: () => go("upload") }, "Upload order"),
-    cols: [{ h: "Order", f: r => r.no, cls: "id" }, { h: "Customer", f: r => r.customer }, { h: "Returned items", f: r => r.items.join(", ") }, { h: "Returned by", f: r => r.by + " (" + (ROLE_LABEL[r.role] || r.role) + ")" }, { h: "Returned", f: r => dt(r.at), cls: "dim" }, { h: "Reason", f: r => r.reason, cls: "wrap" }],
-    rows, search: r => [r.no, r.customer, r.items.join(" "), r.by, r.reason].join(" "), searchHint: "Search by order, customer or code...", empty: "No returned orders." });
+  return [head, el("div", { class: "body" }, el("div", { class: "note" }, "Only the returned lines are waiting for you. The rest of the order continues in the approval cycle. Edit a returned line, then resubmit the order."), sections)];
 }
 async function pDrafts() {
   const { data, error } = await sb.from("my_drafts").select("*").order("date_saved", { ascending: false });
@@ -184,10 +209,45 @@ function pUpload() {
 const issueTable = (issues, rowOf) => issues.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null,
   el("thead", null, el("tr", null, ["Row", "Rule", "Level", "Message"].map(h => el("th", null, h)))),
   el("tbody", null, issues.map(i => el("tr", null, el("td", { class: "dim" }, rowOf(i)), el("td", { class: "id" }, i.rule_id), el("td", null, sevPill(i.severity)), el("td", { class: "wrap" }, i.message)))))) : el("div", { class: "note" }, "No check messages.");
-const linesTable = (lines) => el("div", { class: "tbl", style: "flex:none" }, el("table", null,
-  el("thead", null, el("tr", null, [["Row"], ["Customer"], ["Distributor"], ["Product"], ["Quantity", 1], ["Value", 1], ["Status"]].map(([h, n]) => el("th", { class: n ? "num" : "" }, h)))),
+/* extra = [{ h, f(line) , cls }] adds columns on the right (actions, comments). */
+const linesTable = (lines, extra = []) => el("div", { class: "tbl", style: "flex:none" }, el("table", null,
+  el("thead", null, el("tr", null, [["Row"], ["Customer"], ["Distributor"], ["Product"], ["Quantity", 1], ["Value", 1], ["Status"]].map(([h, n]) => el("th", { class: n ? "num" : "" }, h)), extra.map(x => el("th", null, x.h)))),
   el("tbody", null, lines.map(l => el("tr", null, el("td", { class: "dim" }, l.file_row), el("td", null, l.customer), el("td", null, l.distributor), el("td", null, l.product),
-    el("td", { class: "num" }, num(l.quantity)), el("td", { class: "num" }, num(l.value)), el("td", null, l.status || ""))))));
+    el("td", { class: "num" }, num(l.quantity)), el("td", { class: "num" }, num(l.value)), el("td", null, l.status || ""), extra.map(x => el("td", { class: x.cls || "" }, x.f(l))))))));
+const mapLine = l => ({ id: l.id, raw: l, file_row: l.file_row, customer: l.customer?.name || l.customer_key_entered, distributor: l.distributor, product: l.product?.name || l.product_code_entered,
+  quantity: l.requested_quantity, value: l.customer?.customer_type === "grouped_chain" ? l.requested_quantity * l.pharmacy_price : null, status: l.status });
+const LINE_COLS = "id, file_row, distributor, customer_key_entered, product_code_entered, requested_quantity, pharmacy_price, order_date, earlier_orders_quantity, status, customer:customer(name, customer_type), product:product(name)";
+const ACTION_LABEL = { submitted: "Submitted", returned: "Returned to Distribution Manager", returned_line_corrected: "Line corrected by Distribution Manager", resubmitted: "Resubmitted after correction", quantity_changed: "Quantity changed", stage_added: "Stage added", stage_removed: "Stage removed", stage_reassigned: "Stage reassigned", commented: "Comment added" };
+const actionLabel = a => ACTION_LABEL[a] || pretty(a);
+
+/* Distribution Manager edits a whole line: draft lines, or lines returned to him. */
+function editLine(l, after) {
+  const r = l.raw, msg = el("div", { class: "msg err" });
+  const f = { customer_key_entered: el("input", { type: "text" }), product_code_entered: el("input", { type: "text" }), distributor: el("input", { type: "text" }), requested_quantity: el("input", { type: "text", inputmode: "decimal" }), order_date: el("input", { type: "date" }) };
+  f.customer_key_entered.value = r.customer_key_entered || ""; f.product_code_entered.value = r.product_code_entered || ""; f.distributor.value = r.distributor || "";
+  f.requested_quantity.value = r.requested_quantity ?? ""; f.order_date.value = r.order_date || "";
+  const row = (label, k) => el("label", null, el("span", null, label), f[k]);
+  const save = el("button", { class: "btn primary", type: "submit" }, "Save");
+  const form = el("form", { class: "frm" }, el("div", { class: "dim" }, "Row " + l.file_row + " - the same column the file uses for the customer and the product."),
+    row("Customer (code or brick as entered)", "customer_key_entered"), row("Product (code as entered)", "product_code_entered"), row("Distributor", "distributor"), row("Quantity", "requested_quantity"), row("Order date", "order_date"),
+    msg, el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), save));
+  form.addEventListener("submit", async e => {
+    e.preventDefault(); msg.textContent = ""; const ch = {};
+    const q = f.requested_quantity.value.trim(); if (q === "" || !isFinite(Number(q))) { msg.textContent = "Quantity must be a number."; return; }
+    if (f.customer_key_entered.value.trim() === "" || f.product_code_entered.value.trim() === "") { msg.textContent = "Customer and product are required."; return; }
+    if (f.customer_key_entered.value.trim() !== (r.customer_key_entered || "")) ch.customer_key_entered = f.customer_key_entered.value.trim();
+    if (f.product_code_entered.value.trim() !== (r.product_code_entered || "")) ch.product_code_entered = f.product_code_entered.value.trim();
+    if (f.distributor.value.trim() !== (r.distributor || "")) ch.distributor = f.distributor.value.trim();
+    if (Number(q) !== Number(r.requested_quantity)) ch.requested_quantity = Number(q);
+    if (f.order_date.value !== (r.order_date || "")) ch.order_date = f.order_date.value;
+    if (!Object.keys(ch).length) { closeModal(); return; }
+    save.disabled = true;
+    const { error } = await sb.rpc("dm_edit_line", { p_line_id: l.id, p_changes: ch });
+    if (error) { msg.textContent = error.message; save.disabled = false; return; }
+    closeModal(); after();
+  });
+  modal("Edit line", form);
+}
 
 async function loadIssues(orderId, fileId, lineIds) {
   const a = await sb.from("line_issue").select("rule_id, severity, message, line_id, file_id").eq("file_id", fileId);
@@ -201,15 +261,18 @@ async function pOrder() {
   const { data: o } = await sb.from("orders").select("file_id").eq("id", id).single();
   const rowOf = Object.fromEntries((await sb.from("order_line").select("id, file_row").eq("order_id", id)).data?.map(r => [r.id, r.file_row]) || []);
   const issues = o ? await loadIssues(id, o.file_id, Object.keys(rowOf)) : [];
+  const ids = Object.keys(rowOf), rets = ids.length ? (await sb.from("line_return").select("line_id, reason, returned_by_name, resolved_at, returned_at").in("line_id", ids).order("returned_at")).data || [] : [];
+  const lineIdOfRow = Object.fromEntries(Object.entries(rowOf).map(([k, v]) => [v, k]));
+  const retOf = l => rets.filter(r => r.line_id === lineIdOfRow[l.file_row]).pop();
   return [el("div", { class: "head" }, crumbs({ t: "My orders", go: back || "orders" }, { t: "Order " + (no ?? "") })),
-    el("div", { class: "body" }, el("h2", { class: "sec" }, "Products"), linesTable(lines), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
+    el("div", { class: "body" }, el("h2", { class: "sec" }, "Products"), linesTable(lines, rets.length ? [{ h: "Returned", f: l => { const r = retOf(l); return r ? (r.resolved_at ? pill("Corrected", "ok") : pill("Returned", "warn")) : ""; } },
+      { h: "Comment", f: l => retOf(l)?.reason || "", cls: "wrap" }] : []), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
 }
 async function pDraft() {
   const { id, no } = route.args;
-  const { data: raw, error } = await sb.from("order_line").select("id, file_row, distributor, customer_key_entered, product_code_entered, requested_quantity, pharmacy_price, status, customer:customer(name, customer_type), product:product(name)").eq("order_id", id).order("file_row");
+  const { data: raw, error } = await sb.from("order_line").select(LINE_COLS).eq("order_id", id).order("file_row");
   if (error) return fail(error);
-  const lines = raw.map(l => ({ file_row: l.file_row, customer: l.customer?.name || l.customer_key_entered, distributor: l.distributor, product: l.product?.name || l.product_code_entered,
-    quantity: l.requested_quantity, value: l.customer?.customer_type === "grouped_chain" ? l.requested_quantity * l.pharmacy_price : null, status: l.status }));
+  const lines = raw.map(mapLine);
   const { data: o } = await sb.from("orders").select("file_id, file:order_file(check_result, uploaded_name)").eq("id", id).single();
   const rowOf = Object.fromEntries(raw.map(r => [r.id, r.file_row]));
   const issues = await loadIssues(id, o.file_id, raw.map(r => r.id));
@@ -217,7 +280,9 @@ async function pDraft() {
   check.addEventListener("click", async () => { check.disabled = true; const { data: r, error: e } = await sb.rpc("run_file_check", { p_order_id: id }); if (e) { say(e.message, "err"); check.disabled = false; } else go("draft", route.args); });
   submit.addEventListener("click", async () => { submit.disabled = true; const { error: e } = await sb.rpc("submit_order", { p_order_id: id }); if (e) { say(e.message, "err"); submit.disabled = false; } else go("orders"); });
   return [el("div", { class: "head" }, crumbs({ t: "Drafts", go: "drafts" }, { t: "Order " + (no ?? "") }), checkPill(o.file.check_result), check, submit),
-    el("div", { class: "body" }, el("div", { class: "msg", id: "msg" }), el("div", { class: "dim" }, o.file.uploaded_name), el("h2", { class: "sec" }, "Products"), linesTable(lines), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
+    el("div", { class: "body" }, el("div", { class: "msg", id: "msg" }), el("div", { class: "dim" }, o.file.uploaded_name), el("div", { class: "note" }, "A draft can be edited line by line. After any change, run the check again before you submit."),
+      el("h2", { class: "sec" }, "Products"), linesTable(lines, [{ h: "", f: l => el("button", { class: "btn sm", onclick: () => editLine(l, () => go("draft", route.args)) }, "Edit") }]),
+      el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
 }
 
 /* ---------- Back-End Monitoring ---------- */
@@ -231,28 +296,126 @@ async function pBeOrders() {
     rows: data, search: r => [r.order_no, r.file.uploaded_name, r.creator?.display_name].join(" "), searchHint: "Search by order, file or Distribution Manager...",
     onRow: r => go("be_order", { id: r.id, no: r.order_no }), empty: "No submitted orders." });
 }
+const STAGES = ["second_line_manager", "business_unit_director", "cfo", "cp"];
+async function userNames() { return Object.fromEntries(((await sb.from("app_user").select("id, display_name")).data || []).map(u => [u.id, u.display_name])); }
+/* People a stage can be given to: the Second Line Manager of the product map, or the holder and deputy of an approver stage. */
+function assignees(stage, approvers, pmap) {
+  if (stage === "second_line_manager") { const seen = new Set(); return pmap.filter(p => p.second_line_manager_name && !seen.has(p.second_line_manager_name) && seen.add(p.second_line_manager_name)).map(p => ({ name: p.second_line_manager_name, email: p.second_line_manager_email, label: p.second_line_manager_name })); }
+  return approvers.filter(a => a.stage === stage).flatMap(a => [a.holder_name && { name: a.holder_name, email: a.holder_email, label: a.holder_name + " (holder)" }, a.deputy_name && { name: a.deputy_name, email: a.deputy_email, label: a.deputy_name + " (deputy)" }]).filter(Boolean);
+}
+const personSelect = (opts, none) => el("select", null, el("option", { value: "" }, none), opts.map((p, i) => el("option", { value: i }, p.label)));
 async function pBeOrder() {
-  const { id, no } = route.args;
-  const { data: raw, error } = await sb.from("order_line").select("id, file_row, distributor, customer_key_entered, product_code_entered, requested_quantity, pharmacy_price, earlier_orders_quantity, status, customer:customer(name, customer_type), product:product(name)").eq("order_id", id).order("file_row");
+  const { id, no } = route.args, reload = () => go("be_order", route.args);
+  const { data: raw, error } = await sb.from("order_line").select(LINE_COLS).eq("order_id", id).order("file_row");
   if (error) return fail(error);
-  const lines = raw.map(l => ({ file_row: l.file_row, customer: l.customer?.name || l.customer_key_entered, distributor: l.distributor, product: l.product?.name || l.product_code_entered,
-    quantity: l.requested_quantity, value: l.customer?.customer_type === "grouped_chain" ? l.requested_quantity * l.pharmacy_price : null, status: l.status }));
+  const lines = raw.map(mapLine);
   const { data: o } = await sb.from("orders").select("file_id, arrived_at, creator:app_user(display_name), file:order_file(uploaded_name, upload_type)").eq("id", id).single();
   const rowOf = Object.fromEntries(raw.map(r => [r.id, r.file_row]));
   const issues = await loadIssues(id, o.file_id, raw.map(r => r.id));
-  const hist = (await sb.from("action_log").select("*").eq("order_id", id).order("at")).data || [];
-  return [el("div", { class: "head" }, crumbs({ t: "Orders", go: "be_orders" }, { t: "Order " + (no ?? "") })),
-    el("div", { class: "body" }, el("div", { class: "dim" }, [o.file.uploaded_name, " · ", o.creator?.display_name || "", " · arrived ", dtt(o.arrived_at)].join("")),
-      el("h2", { class: "sec" }, "Products"), linesTable(lines), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"),
-      el("h2", { class: "sec" }, "History"), histTable(hist))];
+  const [histR, retR, stR, cmR, apR, pmR, names] = await Promise.all([sb.from("action_log").select("*").eq("order_id", id).order("at"),
+    sb.from("line_return").select("line_id, reason, returned_by_name, returned_by_role, returned_at, resolved_at").in("line_id", raw.map(r => r.id)).order("returned_at"),
+    sb.from("order_stage").select("*").eq("order_id", id).order("created_at"), sb.from("order_comment").select("*").eq("order_id", id).order("created_at", { ascending: false }),
+    sb.from("approver").select("*"), sb.from("product_map").select("second_line_manager_name, second_line_manager_email"), userNames()]);
+  const hist = histR.data || [], rets = retR.data || [], stages = stR.data || [], comments = cmR.data || [], approvers = apR.data || [], pmap = pmR.data || [];
+  const openRet = lineId => rets.filter(r => r.line_id === lineId && !r.resolved_at).pop();
+  const openCount = rets.filter(r => !r.resolved_at).length;
+
+  /* Return lines: comment mandatory on every line */
+  const returnBtn = el("button", { class: "btn primary sm" }, "Return selected lines");
+  returnBtn.addEventListener("click", () => {
+    const picked = lines.filter(l => document.querySelector('input[data-pick="' + l.id + '"]')?.checked);
+    if (!picked.length) { say("Select the lines to return first.", "err"); return; }
+    const msg = el("div", { class: "msg err" }), areas = {};
+    const form = el("form", { class: "frm" }, el("div", { class: "dim" }, "Only these lines go back to the Distribution Manager. The rest of the order continues in the cycle. A comment is required on each line."),
+      picked.map(l => { areas[l.id] = el("textarea", { placeholder: "Comment for this line" }); return el("div", { class: "item" }, el("div", null, el("b", null, "Row " + l.file_row + ": " + l.product), " - " + l.customer + ", " + num(l.quantity)), areas[l.id]); }),
+      msg, el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), el("button", { class: "btn primary", type: "submit" }, "Return")));
+    form.addEventListener("submit", async e => {
+      e.preventDefault(); msg.textContent = "";
+      const p = picked.map(l => ({ line_id: l.id, reason: areas[l.id].value.trim() }));
+      if (p.some(x => !x.reason)) { msg.textContent = "Write a comment on every returned line."; return; }
+      const { error: er } = await sb.rpc("be_return_lines", { p_order_id: id, p_lines: p });
+      if (er) { msg.textContent = er.message; return; } closeModal(); reload();
+    });
+    modal("Return lines to the Distribution Manager", form);
+  });
+  /* Change quantity: reason mandatory, the whole order is checked again */
+  const changeQty = l => {
+    const msg = el("div", { class: "msg err" }), q = el("input", { type: "text", inputmode: "numeric" }), why = el("textarea", { placeholder: "Reason" }); q.value = l.quantity ?? "";
+    const form = el("form", { class: "frm" }, el("div", { class: "dim" }, "Row " + l.file_row + ": " + l.product + " - " + l.customer), el("label", null, el("span", null, "New quantity (whole number)"), q), el("label", null, el("span", null, "Reason *"), why), msg,
+      el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), el("button", { class: "btn primary", type: "submit" }, "Save")));
+    form.addEventListener("submit", async e => {
+      e.preventDefault(); msg.textContent = ""; const n = Number(q.value.trim());
+      if (q.value.trim() === "" || !Number.isInteger(n) || n < 0) { msg.textContent = "Enter a whole number, zero or more."; return; }
+      if (!why.value.trim()) { msg.textContent = "A reason is required."; return; }
+      const { error: er } = await sb.rpc("be_change_quantity", { p_line_id: l.id, p_quantity: n, p_reason: why.value.trim() });
+      if (er) { msg.textContent = er.message; return; } closeModal(); reload();
+    });
+    modal("Change quantity", form);
+  };
+  const linesBlock = linesTable(lines, [
+    { h: "", f: l => openRet(l.id) ? "" : el("input", { type: "checkbox", "data-pick": l.id }) },
+    { h: "Returned", f: l => { const r = openRet(l.id); return r ? pill("Waiting for Distribution Manager", "warn") : ""; } },
+    { h: "Comment", f: l => { const r = openRet(l.id); return r ? r.reason + " (" + r.returned_by_name + ")" : ""; }, cls: "wrap" },
+    { h: "", f: l => el("button", { class: "btn sm", onclick: () => changeQty(l) }, "Change quantity") }]);
+
+  /* Route */
+  const reassign = s => {
+    const opts = assignees(s.stage, approvers, pmap), sel = personSelect(opts, "Select..."), msg = el("div", { class: "msg err" });
+    const form = el("form", { class: "frm" }, el("label", null, el("span", null, "Move " + (ROLE_LABEL[s.stage]) + " to"), sel), msg,
+      el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), el("button", { class: "btn primary", type: "submit" }, "Save")));
+    form.addEventListener("submit", async e => {
+      e.preventDefault(); if (sel.value === "") { msg.textContent = "Choose a user."; return; }
+      const p = opts[Number(sel.value)], { error: er } = await sb.rpc("be_reassign_stage", { p_order_id: id, p_stage: s.stage, p_name: p.name, p_email: p.email });
+      if (er) { msg.textContent = er.message; return; } closeModal(); reload();
+    });
+    modal("Reassign stage", form);
+  };
+  const removeStage = async s => { const { error: er } = await sb.rpc("be_set_stage", { p_order_id: id, p_stage: s.stage, p_present: false }); if (er) say(er.message, "err"); else reload(); };
+  const missing = STAGES.filter(s => !stages.some(x => x.stage === s));
+  const addStage = () => {
+    const st = el("select", null, missing.map(s => el("option", { value: s }, ROLE_LABEL[s]))), holder = el("div"), msg = el("div", { class: "msg err" });
+    let opts = [], sel;
+    const fill = () => { opts = assignees(st.value, approvers, pmap); sel = personSelect(opts, "(no one assigned)"); holder.replaceChildren(el("label", null, el("span", null, "Assigned to"), sel)); };
+    st.addEventListener("change", fill); fill();
+    const form = el("form", { class: "frm" }, el("label", null, el("span", null, "Stage"), st), holder, msg, el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), el("button", { class: "btn primary", type: "submit" }, "Add")));
+    form.addEventListener("submit", async e => {
+      e.preventDefault(); const p = sel.value === "" ? {} : opts[Number(sel.value)];
+      const { error: er } = await sb.rpc("be_set_stage", { p_order_id: id, p_stage: st.value, p_present: true, p_name: p.name || null, p_email: p.email || null });
+      if (er) { msg.textContent = er.message; return; } closeModal(); reload();
+    });
+    modal("Add stage", form);
+  };
+  const routeTbl = stages.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["Stage", "Assigned to", ""].map(h => el("th", null, h)))),
+    el("tbody", null, stages.map(s => el("tr", null, el("td", { class: "id" }, ROLE_LABEL[s.stage]), el("td", null, s.assigned_name || "No one assigned"),
+      el("td", null, el("div", { class: "act" }, el("button", { class: "btn sm", onclick: () => reassign(s) }, "Reassign"), el("button", { class: "btn sm", onclick: () => removeStage(s) }, "Remove")))))))) : el("div", { class: "note" }, "No approval stages set on this order yet.");
+
+  /* Comments with a mention */
+  const people = [...new Map([...assignees("second_line_manager", approvers, pmap), ...STAGES.slice(1).flatMap(s => assignees(s, approvers, pmap))].map(p => [p.name, p])).values()];
+  const cText = el("textarea", { placeholder: "Write a comment" }), cMention = personSelect(people.map(p => ({ ...p, label: p.name })), "(no mention)"), cMsg = el("div", { class: "msg err" }), cBtn = el("button", { class: "btn primary sm" }, "Add comment");
+  cBtn.addEventListener("click", async () => {
+    cMsg.textContent = ""; if (!cText.value.trim()) { cMsg.textContent = "Write the comment."; return; }
+    const p = cMention.value === "" ? {} : people[Number(cMention.value)];
+    const { error: er } = await sb.rpc("be_add_comment", { p_order_id: id, p_body: cText.value.trim(), p_name: p.name || null, p_email: p.email || null });
+    if (er) cMsg.textContent = er.message; else reload();
+  });
+  const commentList = comments.length ? comments.map(c => el("div", { class: "cmt" }, el("small", null, (names[c.author] || "Back-End") + " · " + dtt(c.created_at) + (c.mentioned_name ? " · mentions " + c.mentioned_name : "")), c.body)) : [el("div", { class: "note" }, "No comments yet.")];
+
+  return [el("div", { class: "head" }, crumbs({ t: "Orders", go: "be_orders" }, { t: "Order " + (no ?? "") }), openCount ? pill(openCount + " line(s) returned", "warn") : "", returnBtn),
+    el("div", { class: "body" }, el("div", { class: "dim" }, [o.file.uploaded_name, " · ", o.creator?.display_name || "", " · arrived ", dtt(o.arrived_at)].join("")), el("div", { class: "msg", id: "msg" }),
+      el("h2", { class: "sec" }, "Products"), linesBlock, el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"),
+      el("div", { class: "twocol" },
+        el("div", { style: "display:flex;flex-direction:column;gap:8px" }, el("div", { class: "head", style: "padding:0;border:0;min-height:0" }, el("h2", { class: "sec", style: "flex:1" }, "Approval route"), missing.length ? el("button", { class: "btn sm", onclick: addStage }, "Add stage") : ""), routeTbl),
+        el("div", { style: "display:flex;flex-direction:column;gap:8px" }, el("h2", { class: "sec" }, "Comments"), cText, el("div", { class: "tools" }, cMention, cBtn), cMsg, commentList)),
+      el("h2", { class: "sec" }, "Audit trail"), histTable(hist, names))];
 }
-const histTable = h => h.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["When", "Action", "Role", "Detail"].map(x => el("th", null, x)))),
-  el("tbody", null, h.map(r => el("tr", null, el("td", { class: "dim" }, dtt(r.at)), el("td", { class: "id" }, r.action), el("td", null, ROLE_LABEL[r.actor_role] || r.actor_role), el("td", null, r.detail || "")))))) : el("div", { class: "note" }, "No actions recorded for this order.");
+const histTable = (h, names = {}) => h.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["When", "Action", "By", "Role", "Detail"].map(x => el("th", null, x)))),
+  el("tbody", null, h.map(r => el("tr", null, el("td", { class: "dim" }, dtt(r.at)), el("td", { class: "id" }, actionLabel(r.action)), el("td", null, names[r.actor] || ""), el("td", null, ROLE_LABEL[r.actor_role] || r.actor_role), el("td", { class: "wrap" }, r.detail || "")))))) : el("div", { class: "note" }, "No actions recorded for this order.");
 async function pBeHistory() {
-  const { data, error } = await sb.from("action_log").select("*, order:orders(order_no)").order("at", { ascending: false }).limit(200);
+  const { data, error } = await sb.from("action_log").select("*, order:orders(order_no)").order("at", { ascending: false }).limit(300);
   if (error) return fail(error);
-  return listPage({ title: "Order History", cols: [{ h: "When", f: r => dtt(r.at), cls: "dim" }, { h: "Order", f: r => r.order?.order_no ?? "", cls: "id" }, { h: "Action", f: r => r.action }, { h: "Role", f: r => ROLE_LABEL[r.actor_role] || r.actor_role }, { h: "Detail", f: r => r.detail || "" }],
-    rows: data, search: r => [r.order?.order_no, r.action, r.detail].join(" "), searchHint: "Search by order, action or detail...", empty: "No actions recorded yet." });
+  const names = await userNames();
+  return listPage({ title: "Order History", cols: [{ h: "When", f: r => dtt(r.at), cls: "dim" }, { h: "Order", f: r => r.order?.order_no ?? "", cls: "id" }, { h: "Action", f: r => actionLabel(r.action) }, { h: "By", f: r => names[r.actor] || "" }, { h: "Role", f: r => ROLE_LABEL[r.actor_role] || r.actor_role }, { h: "Detail", f: r => r.detail || "", cls: "wrap" }],
+    rows: data, search: r => [r.order?.order_no, actionLabel(r.action), r.detail, names[r.actor]].join(" "), searchHint: "Search by order, action or detail...", empty: "No actions recorded yet." });
 }
 const REF = [["cap", "Caps", "*, product(name)"], ["product_growth", "Allowed growth", "*, product(name)"], ["guided_value", "Guided Value", "*"], ["product_map", "Product map", "*, product(name)"], ["approver", "Approvers", "*"],
   ["special_case", "Special-case accounts", "*, customer(name)"], ["blacklist", "Blacklist", "*, customer(name)"], ["bulk_purchase", "Bulk-purchase list", "*, customer(name), product(name)"], ["concern_type", "Concern types", "*"],
