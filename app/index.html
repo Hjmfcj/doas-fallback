@@ -69,6 +69,9 @@
   .cmt { border:1px solid var(--line); border-radius:6px; padding:8px 12px; } .cmt small { color:var(--muted); display:block; margin-bottom:2px; }
   td.wrap { white-space:normal; min-width:220px; }
   [hidden] { display:none !important; }
+  input[hidden], select[hidden] { display:none !important; }
+  .tbl td select, .tbl td input[type=text] { font-size:12px; }
+  .stack { display:flex; flex-direction:column; gap:4px; }
   @media (max-width: 760px) { aside { width:64px; } .brand div, nav a span.t, .user div { display:none; } .tbl { overflow:auto; } }
 </style>
 </head>
@@ -97,9 +100,11 @@
 const sb = window.supabase.createClient("https://uyamkictdpdvuejftglw.supabase.co", "sb_publishable_1DScXyeTpxGvv59KzhK3Gw_OR--45YD");
 const $ = id => document.getElementById(id);
 const ROLE_LABEL = { distribution_manager: "Distribution Manager", back_end_monitoring: "Back-End Monitoring", second_line_manager: "Second Line Manager", business_unit_director: "Business Unit Director", cfo: "CFO", cp: "CP", management: "Management" };
+const APPROVER_NAV = [["ap_list", "My approvals", "✓"], ["notes", "Notifications", "●"]];
 const NAV = {
-  distribution_manager: [["orders", "My Orders", "≡"], ["returned", "Returned Orders", "↺"], ["drafts", "Drafts", "✎"]],
-  back_end_monitoring: [["be_orders", "Orders", "≡"], ["be_history", "Order History", "↺"], ["be_ref", "Reference Data", "▤"]]
+  distribution_manager: [["orders", "My Orders", "≡"], ["returned", "Returned Orders", "↺"], ["drafts", "Drafts", "✎"], ["notes", "Notifications", "●"]],
+  back_end_monitoring: [["be_orders", "Orders", "≡"], ["be_history", "Order History", "↺"], ["be_ref", "Reference Data", "▤"], ["notes", "Notifications", "●"]],
+  second_line_manager: APPROVER_NAV, business_unit_director: APPROVER_NAV, cfo: APPROVER_NAV, cp: APPROVER_NAV
 };
 let me = null, route = { page: null, args: {} };
 
@@ -253,11 +258,25 @@ const issueTable = (issues, rowOf) => issues.length ? el("div", { class: "tbl", 
 const linesTable = (lines, extra = []) => el("div", { class: "tbl", style: "flex:none" }, el("table", null,
   el("thead", null, el("tr", null, [["Row"], ["Customer"], ["Distributor"], ["Product"], ["Quantity", 1], ["Value", 1], ["Status"]].map(([h, n]) => el("th", { class: n ? "num" : "" }, h)), extra.map(x => el("th", null, x.h)))),
   el("tbody", null, lines.map(l => el("tr", null, el("td", { class: "dim" }, l.file_row), el("td", null, l.customer), el("td", null, l.distributor), el("td", null, l.product),
-    el("td", { class: "num" }, num(l.quantity)), el("td", { class: "num" }, num(l.value)), el("td", null, l.status || ""), extra.map(x => el("td", { class: x.cls || "" }, x.f(l))))))));
+    el("td", { class: "num" }, num(l.quantity)), el("td", { class: "num" }, num(l.value)), el("td", null, linePill(l.status)), extra.map(x => el("td", { class: x.cls || "" }, x.f(l))))))));
 const mapLine = l => ({ id: l.id, raw: l, file_row: l.file_row, customer: l.customer?.name || l.customer_key_entered, distributor: l.distributor, product: l.product?.name || l.product_code_entered,
   quantity: l.requested_quantity, value: l.customer?.customer_type === "grouped_chain" ? l.requested_quantity * l.pharmacy_price : null, status: l.status });
+/* Approval engine helpers */
+const STATE_LABEL = { not_routed: ["Not routed", "info"], no_approval: ["No approval needed", "ok"], needs_inputs: ["Needs Back-End inputs", "warn"], in_approval: ["In approval", "info"], completed: ["Completed", "ok"] };
+const statePill = v => { const x = STATE_LABEL[v] || [pretty(v || ""), "info"]; return pill(x[0], x[1]); };
+const LINE_KIND = { "Awaiting Back-End inputs": "warn", Cleared: "ok", "In approval": "info", Approved: "ok", Rejected: "err", Returned: "warn" };
+const linePill = v => v ? pill(v, LINE_KIND[v] || "info") : "";
+const ROLE_SHORT = { second_line_manager: "SLM", business_unit_director: "BUD", cfo: "CFO", cp: "CP" };
+/* Working time since the order arrived: Friday, Saturday and the holidays table are left out. Colours and the overdue mark follow the levels recorded in the build register; the sources are not consistent on them (open points 9 and 18). */
+const ageing = a => a && a.working_hours != null ? el("span", null, pill(num(a.working_hours) + " working h", a.level === "red" ? "err" : a.level === "orange" ? "warn" : "info"), a.overdue ? " " : "", a.overdue ? pill("Overdue", "err") : "") : "";
+const nextStageOf = (line, decided) => (line.required_stages || []).find(x => !decided.has(line.id + ":" + x));
+const inputsOf = l => { const r = l.raw, b = []; if (r.gv_position_pct != null) b.push("GV " + num(r.gv_position_pct) + "%"); if (r.over_allowed_growth != null) b.push(r.over_allowed_growth ? "over allowed growth" : "within allowed growth");
+  if (r.growth_pct != null) b.push("growth " + num(r.growth_pct) + "%"); if (r.doh_with_order != null) b.push("DOH " + num(r.doh_with_order)); if (r.seek_full_quantity) b.push("full quantity wanted");
+  if (r.capped_quantity != null) b.push("capped " + num(r.capped_quantity)); if (r.calculated_quantity != null) b.push("calculated " + num(r.calculated_quantity)); return b.join(", "); };
+const outcomeOf = l => l.raw.approved_quantity == null ? "" : num(l.raw.approved_quantity) + (l.raw.postponed_quantity ? " (postponed " + num(l.raw.postponed_quantity) + ")" : "");
+const LINE_COLS_X = "id, file_row, distributor, customer_key_entered, customer_id, product_code_entered, requested_quantity, pharmacy_price, order_date, earlier_orders_quantity, status, gv_position_pct, over_allowed_growth, growth_pct, doh_with_order, seek_full_quantity, capped_quantity, calculated_quantity, required_stages, approved_quantity, postponed_quantity, customer:customer(name, customer_type), product:product(name)";
 const LINE_COLS = "id, file_row, distributor, customer_key_entered, product_code_entered, requested_quantity, pharmacy_price, order_date, earlier_orders_quantity, status, customer:customer(name, customer_type), product:product(name)";
-const ACTION_LABEL = { submitted: "Submitted", returned: "Returned to Distribution Manager", returned_line_corrected: "Line corrected by Distribution Manager", resubmitted: "Resubmitted after correction", quantity_changed: "Quantity changed", stage_added: "Stage added", stage_removed: "Stage removed", stage_reassigned: "Stage reassigned", commented: "Comment added" };
+const ACTION_LABEL = { submitted: "Submitted", returned: "Returned to Distribution Manager", returned_line_corrected: "Line corrected by Distribution Manager", resubmitted: "Resubmitted after correction", quantity_changed: "Quantity changed", stage_added: "Stage added", stage_removed: "Stage removed", stage_reassigned: "Stage reassigned", commented: "Comment added", routed: "Route set by the system", inputs_saved: "Routing inputs saved", approved: "Approved", rejected: "Rejected", completed: "Order completed", route_reset: "Route recalculated by Back-End" };
 const actionLabel = a => ACTION_LABEL[a] || pretty(a);
 
 /* Distribution Manager edits a whole line: draft lines, or lines returned to him. */
@@ -298,15 +317,23 @@ async function pOrder() {
   const { id, no, back } = route.args;
   const { data: lines, error } = await sb.from("my_order_lines").select("*").eq("order_id", id).order("file_row");
   if (error) return fail(error);
-  const { data: o } = await sb.from("orders").select("file_id").eq("id", id).single();
-  const rowOf = Object.fromEntries((await sb.from("order_line").select("id, file_row").eq("order_id", id)).data?.map(r => [r.id, r.file_row]) || []);
+  const { data: o } = await sb.from("orders").select("file_id, route_state").eq("id", id).single();
+  const eng = (await sb.from("order_line").select("id, file_row, status, approved_quantity, postponed_quantity").eq("order_id", id)).data || [];
+  const rowOf = Object.fromEntries(eng.map(r => [r.id, r.file_row])), engOf = Object.fromEntries(eng.map(r => [r.file_row, r]));
   const issues = o ? await loadIssues(id, o.file_id, Object.keys(rowOf)) : [];
-  const ids = Object.keys(rowOf), rets = ids.length ? (await sb.from("line_return").select("line_id, reason, returned_by_name, resolved_at, returned_at").in("line_id", ids).order("returned_at")).data || [] : [];
+  const ids = Object.keys(rowOf);
+  const [rtR, dcR] = await Promise.all([ids.length ? sb.from("line_return").select("line_id, reason, returned_by_name, resolved_at, returned_at").in("line_id", ids).order("returned_at") : { data: [] },
+    ids.length ? sb.from("line_decision").select("line_id, stage, decision, quantity, decided_name").in("line_id", ids).eq("superseded", false).order("decided_at") : { data: [] }]);
+  const rets = rtR.data || [], decs = dcR.data || [];
   const lineIdOfRow = Object.fromEntries(Object.entries(rowOf).map(([k, v]) => [v, k]));
   const retOf = l => rets.filter(r => r.line_id === lineIdOfRow[l.file_row]).pop();
-  return [el("div", { class: "head" }, crumbs({ t: "My orders", go: back || "orders" }, { t: "Order " + (no ?? "") })),
-    el("div", { class: "body" }, el("h2", { class: "sec" }, "Products"), linesTable(lines, rets.length ? [{ h: "Returned", f: l => { const r = retOf(l); return r ? (r.resolved_at ? pill("Corrected", "ok") : pill("Returned", "warn")) : ""; } },
-      { h: "Comment", f: l => retOf(l)?.reason || "", cls: "wrap" }] : []), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
+  const shown = lines.map(l => ({ ...l, status: engOf[l.file_row]?.status ?? l.status }));
+  const extra = [
+    { h: "Approved quantity", f: l => { const e = engOf[l.file_row]; return e?.approved_quantity == null ? "" : num(e.approved_quantity) + (e.postponed_quantity ? " (postponed " + num(e.postponed_quantity) + ")" : ""); } },
+    { h: "Decisions", f: l => decs.filter(d => d.line_id === lineIdOfRow[l.file_row]).map(d => ROLE_SHORT[d.stage] + " " + (d.decision === "approved" ? "approved " + num(d.quantity) : "rejected")).join(" · "), cls: "wrap" }];
+  if (rets.length) extra.push({ h: "Returned", f: l => { const r = retOf(l); return r ? (r.resolved_at ? pill("Corrected", "ok") : pill("Returned", "warn")) : ""; } }, { h: "Comment", f: l => retOf(l)?.reason || "", cls: "wrap" });
+  return [el("div", { class: "head" }, crumbs({ t: "My orders", go: back || "orders" }, { t: "Order " + (no ?? "") }), o ? statePill(o.route_state) : ""),
+    el("div", { class: "body" }, el("h2", { class: "sec" }, "Products"), linesTable(shown, extra), el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"))];
 }
 async function pDraft() {
   const { id, no } = route.args;
@@ -327,13 +354,21 @@ async function pDraft() {
 
 /* ---------- Back-End Monitoring ---------- */
 async function pBeOrders() {
-  const { data, error } = await sb.from("orders").select("id, order_no, arrived_at, creator:app_user(display_name), file:order_file!inner(uploaded_name, state), lines:order_line(count)").eq("file.state", "submitted").order("arrived_at", { ascending: false });
+  const { data, error } = await sb.from("orders").select("id, order_no, arrived_at, route_state, creator:app_user(display_name), file:order_file!inner(uploaded_name, state), lines:order_line(id, status, required_stages)").eq("file.state", "submitted").order("arrived_at", { ascending: false });
   if (error) return fail(error);
-  const cap = await sb.from("line_issue").select("line:order_line!inner(order_id)").eq("rule_id", "V-05");
-  const above = new Set((cap.data || []).map(r => r.line.order_id));
+  const [ag, dc, rt, st] = await Promise.all([sb.from("order_ageing").select("*"), sb.from("line_decision").select("line_id, stage").eq("decision", "approved").eq("superseded", false),
+    sb.from("line_return").select("line_id").is("resolved_at", null), sb.from("order_stage").select("order_id, stage, assigned_name")]);
+  const age = Object.fromEntries((ag.data || []).map(a => [a.order_id, a])), decided = new Set((dc.data || []).map(d => d.line_id + ":" + d.stage)), returned = new Set((rt.data || []).map(r => r.line_id));
+  const who = Object.fromEntries((st.data || []).map(x => [x.order_id + ":" + x.stage, x.assigned_name]));
+  data.forEach(o => {
+    const next = o.lines.filter(l => l.status === "In approval").map(l => nextStageOf(l, decided)).filter(Boolean).sort((a, b) => STAGES.indexOf(a) - STAGES.indexOf(b));
+    o.now = next.length ? ROLE_LABEL[next[0]] + (who[o.id + ":" + next[0]] ? " - " + who[o.id + ":" + next[0]] : "") : "";
+    o.retN = o.lines.filter(l => returned.has(l.id)).length; o.age = age[o.id];
+  });
   return listPage({ title: "Orders", cols: [{ h: "Order", f: r => r.order_no, cls: "id" }, { h: "File", f: r => r.file.uploaded_name }, { h: "Distribution Manager", f: r => r.creator?.display_name || "" },
-      { h: "Lines", f: r => r.lines[0]?.count ?? 0, num: true }, { h: "Above cap (V-05)", f: r => above.has(r.id) ? pill("Yes", "warn") : pill("No", "info") }, { h: "Arrived", f: r => dt(r.arrived_at), cls: "dim" }],
-    rows: data, search: r => [r.order_no, r.file.uploaded_name, r.creator?.display_name].join(" "), searchHint: "Search by order, file or Distribution Manager...",
+      { h: "Lines", f: r => r.lines.length, num: true }, { h: "Status", f: r => statePill(r.route_state) }, { h: "Now at", f: r => r.now }, { h: "Returned lines", f: r => r.retN ? pill(r.retN + " returned", "warn") : "" },
+      { h: "Ageing", f: r => ageing(r.age) }, { h: "Arrived", f: r => dt(r.arrived_at), cls: "dim" }],
+    rows: data, search: r => [r.order_no, r.file.uploaded_name, r.creator?.display_name, (STATE_LABEL[r.route_state] || [""])[0], r.now].join(" "), searchHint: "Search by order, file, Distribution Manager or status...",
     onRow: r => go("be_order", { id: r.id, no: r.order_no }), empty: "No submitted orders." });
 }
 const STAGES = ["second_line_manager", "business_unit_director", "cfo", "cp"];
@@ -346,17 +381,20 @@ function assignees(stage, approvers, pmap) {
 const personSelect = (opts, none) => el("select", null, el("option", { value: "" }, none), opts.map((p, i) => el("option", { value: i }, p.label)));
 async function pBeOrder() {
   const { id, no } = route.args, reload = () => go("be_order", route.args);
-  const { data: raw, error } = await sb.from("order_line").select(LINE_COLS).eq("order_id", id).order("file_row");
+  const { data: raw, error } = await sb.from("order_line").select(LINE_COLS_X).eq("order_id", id).order("file_row");
   if (error) return fail(error);
   const lines = raw.map(mapLine);
-  const { data: o } = await sb.from("orders").select("file_id, arrived_at, creator:app_user(display_name), file:order_file(uploaded_name, upload_type)").eq("id", id).single();
+  const { data: o } = await sb.from("orders").select("file_id, arrived_at, route_state, route_note, route_locked, concern_type, concern_note, creator:app_user(display_name), file:order_file(uploaded_name, upload_type)").eq("id", id).single();
   const rowOf = Object.fromEntries(raw.map(r => [r.id, r.file_row]));
   const issues = await loadIssues(id, o.file_id, raw.map(r => r.id));
-  const [histR, retR, stR, cmR, apR, pmR, names] = await Promise.all([sb.from("action_log").select("*").eq("order_id", id).order("at"),
+  const [histR, retR, stR, cmR, apR, pmR, names, decR, spR, ctR, agR] = await Promise.all([sb.from("action_log").select("*").eq("order_id", id).order("at"),
     sb.from("line_return").select("line_id, reason, returned_by_name, returned_by_role, returned_at, resolved_at").in("line_id", raw.map(r => r.id)).order("returned_at"),
     sb.from("order_stage").select("*").eq("order_id", id).order("created_at"), sb.from("order_comment").select("*").eq("order_id", id).order("created_at", { ascending: false }),
-    sb.from("approver").select("*"), sb.from("product_map").select("second_line_manager_name, second_line_manager_email"), userNames()]);
-  const hist = histR.data || [], rets = retR.data || [], stages = stR.data || [], comments = cmR.data || [], approvers = apR.data || [], pmap = pmR.data || [];
+    sb.from("approver").select("*"), sb.from("product_map").select("second_line_manager_name, second_line_manager_email"), userNames(),
+    sb.from("line_decision").select("*").in("line_id", raw.map(r => r.id)).eq("superseded", false).order("decided_at"), sb.from("special_case").select("customer_id"),
+    sb.from("concern_type").select("name").order("name"), sb.from("order_ageing").select("*").eq("order_id", id).maybeSingle()]);
+  const decs = decR.data || [], specials = new Set((spR.data || []).map(x => x.customer_id)), concerns = (ctR.data || []).map(c => c.name), ageRow = agR.data;
+  const hist = histR.data || [], rets = retR.data || [], stages = [...(stR.data || [])].sort((a, b) => a.seq - b.seq), comments = cmR.data || [], approvers = apR.data || [], pmap = pmR.data || [];
   const openRet = lineId => rets.filter(r => r.line_id === lineId && !r.resolved_at).pop();
   const openCount = rets.filter(r => !r.resolved_at).length;
 
@@ -392,11 +430,60 @@ async function pBeOrder() {
     });
     modal("Change quantity", form);
   };
+  /* One owner per line: a returned line belongs to the Distribution Manager, a decided line to the approvers. The database enforces the same locks. */
+  const lockedLine = l => ["Approved", "Rejected", "Returned"].includes(l.status) || !!openRet(l.id) || decs.some(d => d.line_id === l.id);
   const linesBlock = linesTable(lines, [
-    { h: "", f: l => openRet(l.id) ? "" : el("input", { type: "checkbox", "data-pick": l.id }) },
-    { h: "Returned", f: l => { const r = openRet(l.id); return r ? pill("Waiting for Distribution Manager", "warn") : ""; } },
-    { h: "Comment", f: l => { const r = openRet(l.id); return r ? r.reason + " (" + r.returned_by_name + ")" : ""; }, cls: "wrap" },
-    { h: "", f: l => el("button", { class: "btn sm", onclick: () => changeQty(l) }, "Change quantity") }]);
+    { h: "", f: l => el("div", { class: "act" }, openRet(l.id) || ["Approved", "Rejected"].includes(l.status) ? "" : el("input", { type: "checkbox", "data-pick": l.id, title: "Select to return" }), lockedLine(l) ? "" : el("button", { class: "btn sm", onclick: () => changeQty(l) }, "Change quantity")) },
+    { h: "Back-End inputs", f: l => inputsOf(l), cls: "wrap" },
+    { h: "Approved", f: l => outcomeOf(l) },
+    { h: "Decisions", f: l => decs.filter(d => d.line_id === l.id).map(d => ROLE_SHORT[d.stage] + " " + (d.decision === "approved" ? "approved " + num(d.quantity) : "rejected")).join(" · "), cls: "wrap" },
+    { h: "Returned", f: l => { const r = openRet(l.id); return r ? el("div", { class: "stack" }, pill("Waiting for Distribution Manager", "warn"), el("small", { class: "dim" }, r.reason + " (" + r.returned_by_name + ")")) : ""; }, cls: "wrap" }]);
+
+  /* Routing inputs: what the system needs from the Back-End to propose the route. Only the fields that apply to the line's customer type are shown. */
+  const openInputs = () => {
+    const open = lines.filter(l => !lockedLine(l)), msg = el("div", { class: "msg err" }), fld = {};
+    const tri = v => { const x = el("select", null, el("option", { value: "" }, "Not set"), el("option", { value: "true" }, "Yes"), el("option", { value: "false" }, "No")); x.value = v == null ? "" : String(v); return x; };
+    const txt = v => { const x = el("input", { type: "text", inputmode: "decimal" }); x.value = v ?? ""; return x; };
+    const chk = v => { const x = el("input", { type: "checkbox" }); x.checked = !!v; return x; };
+    const lab = (t, c) => el("label", null, el("span", null, t), c);
+    const blocks = open.map(l => {
+      const r = l.raw, f = fld[l.id] = {}, ct = r.customer?.customer_type, rows = [];
+      if (r.customer_id == null) rows.push(el("div", { class: "dim" }, "Customer or product not recognised: the Distribution Manager must correct this line."));
+      else if (specials.has(r.customer_id)) { f.calculated_quantity = txt(r.calculated_quantity); rows.push(lab("Calculated quantity (special-case account)", f.calculated_quantity)); }
+      else if (ct === "grouped_chain") { f.gv_position_pct = txt(r.gv_position_pct); f.over_allowed_growth = tri(r.over_allowed_growth);
+        rows.push(lab("Guided Value position of the chain (%)", f.gv_position_pct), lab("Product over its allowed growth", f.over_allowed_growth)); }
+      else if (ct === "egydrug") { f.doh_with_order = txt(r.doh_with_order); f.seek_full_quantity = chk(r.seek_full_quantity); f.capped_quantity = txt(r.capped_quantity);
+        rows.push(lab("Days on Hand with the order", f.doh_with_order), lab("Full quantity is requested (approval path)", f.seek_full_quantity), lab("Quantity that brings the pharmacy to 30 days of cover", f.capped_quantity)); }
+      else { f.growth_pct = txt(r.growth_pct); rows.push(lab("Growth against last year's average (%)", f.growth_pct)); }
+      return el("div", { class: "item" }, el("div", null, el("b", null, "Row " + l.file_row + ": " + l.product), " - " + l.customer + ", " + num(l.quantity) + " (" + pretty(ct || "unknown type") + ")"), rows);
+    });
+    const cSel = el("select", null, el("option", { value: "" }, "None"), concerns.map(c => el("option", { value: c }, c))); cSel.value = o.concern_type || "";
+    const cNote = el("textarea", { placeholder: "Note" }); cNote.value = o.concern_note || "";
+    const form = el("form", { class: "frm" }, el("div", { class: "dim" }, "The system proposes the approval route from these inputs. You can edit the route afterwards; once you do, the system stops changing it unless you recalculate."),
+      o.route_note ? el("div", { class: "note" }, o.route_note) : "", blocks.length ? blocks : el("div", { class: "note" }, "Every line is already with the Distribution Manager or an approver, or is final."),
+      el("h2", { class: "sec" }, "Concern on the order"), lab("Concern type", cSel), lab("Concern note", cNote), msg,
+      el("div", { class: "act" }, el("button", { class: "btn", type: "button", onclick: closeModal }, "Cancel"), el("button", { class: "btn primary", type: "submit" }, "Save and route")));
+    form.addEventListener("submit", async e => {
+      e.preventDefault(); msg.textContent = ""; const pl = [];
+      for (const l of open) {
+        const r = l.raw, f = fld[l.id], row = { line_id: l.id }; let changed = false;
+        for (const k in f) {
+          const c = f[k];
+          if (c.type === "checkbox") { row[k] = c.checked ? "true" : "false"; if (c.checked !== !!r[k]) changed = true; }
+          else if (c.tagName === "SELECT") { row[k] = c.value; if (c.value !== (r[k] == null ? "" : String(r[k]))) changed = true; }
+          else { const v = c.value.trim(); if (v !== "" && (!isFinite(Number(v)) || Number(v) < 0)) { msg.textContent = "Row " + l.file_row + ": enter a number, zero or more."; return; }
+            row[k] = v; if (!((v === "" && r[k] == null) || (v !== "" && r[k] != null && Number(v) === Number(r[k])))) changed = true; }
+        }
+        if (changed) pl.push(row);
+      }
+      const ord = {}; if (cSel.value !== (o.concern_type || "") || cNote.value.trim() !== (o.concern_note || "")) { ord.concern_type = cSel.value; ord.concern_note = cNote.value.trim(); }
+      if (!pl.length && !Object.keys(ord).length) { closeModal(); return; }
+      const { error: er } = await sb.rpc("be_set_inputs", { p_order_id: id, p_order: ord, p_lines: pl });
+      if (er) { msg.textContent = er.message; return; } closeModal(); reload();
+    });
+    modal("Routing inputs", form);
+  };
+  const inputsBtn = o.route_state === "completed" ? "" : el("button", { class: "btn sm", onclick: openInputs }, "Routing inputs");
 
   /* Route */
   const reassign = s => {
@@ -425,9 +512,12 @@ async function pBeOrder() {
     });
     modal("Add stage", form);
   };
-  const routeTbl = stages.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["Stage", "Assigned to", ""].map(h => el("th", null, h)))),
-    el("tbody", null, stages.map(s => el("tr", null, el("td", { class: "id" }, ROLE_LABEL[s.stage]), el("td", null, s.assigned_name || "No one assigned"),
-      el("td", null, el("div", { class: "act" }, el("button", { class: "btn sm", onclick: () => reassign(s) }, "Reassign"), el("button", { class: "btn sm", onclick: () => removeStage(s) }, "Remove")))))))) : el("div", { class: "note" }, "No approval stages set on this order yet.");
+  const stageDecs = x => decs.filter(d => d.stage === x.stage).map(d => "Row " + rowOf[d.line_id] + ": " + (d.decision === "approved" ? "approved " + num(d.quantity) : "rejected")).join("; ");
+  const resetBtn = o.route_locked && o.route_state !== "completed" ? el("button", { class: "btn sm", onclick: async () => { const { error: er } = await sb.rpc("be_reset_route", { p_order_id: id }); if (er) say(er.message, "err"); else reload(); } }, "Recalculate route") : "";
+  const routeTbl = stages.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["Order", "Stage", "Assigned to", "Set by", "Decisions", ""].map(h => el("th", null, h)))),
+    el("tbody", null, stages.map(x => el("tr", null, el("td", { class: "dim" }, x.seq), el("td", { class: "id" }, ROLE_LABEL[x.stage]), el("td", null, x.assigned_name || "No one assigned"),
+      el("td", null, x.source === "back_end" ? pill("Back-End", "info") : pill("System", "ok"), x.reassigned ? " moved" : ""), el("td", { class: "wrap" }, stageDecs(x)),
+      el("td", null, el("div", { class: "act" }, el("button", { class: "btn sm", onclick: () => reassign(x) }, "Reassign"), decs.some(d => d.stage === x.stage) ? "" : el("button", { class: "btn sm", onclick: () => removeStage(x) }, "Remove")))))))) : el("div", { class: "note" }, o.route_state === "needs_inputs" ? "No route yet: the system needs the routing inputs first." : o.route_state === "no_approval" ? "No approval needed for this order." : "No approval stages set on this order yet.");
 
   /* Comments with a mention */
   const people = [...new Map([...assignees("second_line_manager", approvers, pmap), ...STAGES.slice(1).flatMap(s => assignees(s, approvers, pmap))].map(p => [p.name, p])).values()];
@@ -440,16 +530,17 @@ async function pBeOrder() {
   });
   const commentList = comments.length ? comments.map(c => el("div", { class: "cmt" }, el("small", null, (names[c.author] || "Back-End") + " · " + dtt(c.created_at) + (c.mentioned_name ? " · mentions " + c.mentioned_name : "")), c.body)) : [el("div", { class: "note" }, "No comments yet.")];
 
-  return [el("div", { class: "head" }, crumbs({ t: "Orders", go: "be_orders" }, { t: "Order " + (no ?? "") }), openCount ? pill(openCount + " line(s) returned", "warn") : "", returnBtn),
+  return [el("div", { class: "head" }, crumbs({ t: "Orders", go: "be_orders" }, { t: "Order " + (no ?? "") }), statePill(o.route_state), ageing(ageRow), openCount ? pill(openCount + " line(s) returned", "warn") : "", inputsBtn, returnBtn),
     el("div", { class: "body" }, el("div", { class: "dim" }, [o.file.uploaded_name, " · ", o.creator?.display_name || "", " · arrived ", dtt(o.arrived_at)].join("")), el("div", { class: "msg", id: "msg" }),
+      o.route_note && o.route_state === "needs_inputs" ? el("div", { class: "note" }, o.route_note) : "", o.concern_type ? el("div", { class: "note" }, "Concern: " + o.concern_type + (o.concern_note ? " - " + o.concern_note : "")) : "",
       el("h2", { class: "sec" }, "Products"), linesBlock, el("h2", { class: "sec" }, "Check messages"), issueTable(issues, i => i.line_id ? rowOf[i.line_id] : "File"),
       el("div", { class: "twocol" },
-        el("div", { style: "display:flex;flex-direction:column;gap:8px" }, el("div", { class: "head", style: "padding:0;border:0;min-height:0" }, el("h2", { class: "sec", style: "flex:1" }, "Approval route"), missing.length ? el("button", { class: "btn sm", onclick: addStage }, "Add stage") : ""), routeTbl),
+        el("div", { style: "display:flex;flex-direction:column;gap:8px" }, el("div", { class: "head", style: "padding:0;border:0;min-height:0" }, el("h2", { class: "sec", style: "flex:1" }, "Approval route"), resetBtn, missing.length && o.route_state !== "completed" ? el("button", { class: "btn sm", onclick: addStage }, "Add stage") : ""), routeTbl),
         el("div", { style: "display:flex;flex-direction:column;gap:8px" }, el("h2", { class: "sec" }, "Comments"), cText, el("div", { class: "tools" }, cMention, cBtn), cMsg, commentList)),
       el("h2", { class: "sec" }, "Audit trail"), histTable(hist, names))];
 }
 const histTable = (h, names = {}) => h.length ? el("div", { class: "tbl", style: "flex:none" }, el("table", null, el("thead", null, el("tr", null, ["When", "Action", "By", "Role", "Detail"].map(x => el("th", null, x)))),
-  el("tbody", null, h.map(r => el("tr", null, el("td", { class: "dim" }, dtt(r.at)), el("td", { class: "id" }, actionLabel(r.action)), el("td", null, names[r.actor] || ""), el("td", null, ROLE_LABEL[r.actor_role] || r.actor_role), el("td", { class: "wrap" }, r.detail || "")))))) : el("div", { class: "note" }, "No actions recorded for this order.");
+  el("tbody", null, h.map(r => el("tr", null, el("td", { class: "dim" }, dtt(r.at)), el("td", { class: "id" }, actionLabel(r.action)), el("td", null, names[r.actor] || (r.actor ? "" : "System")), el("td", null, ROLE_LABEL[r.actor_role] || r.actor_role || ""), el("td", { class: "wrap" }, r.detail || "")))))) : el("div", { class: "note" }, "No actions recorded for this order.");
 async function pBeHistory() {
   const { data, error } = await sb.from("action_log").select("*, order:orders(order_no)").order("at", { ascending: false }).limit(300);
   if (error) return fail(error);
@@ -561,13 +652,96 @@ async function pBeRef() {
   return body;
 }
 
-const PAGES = { orders: pOrders, returned: pReturned, drafts: pDrafts, upload: pUpload, order: pOrder, draft: pDraft, be_orders: pBeOrders, be_order: pBeOrder, be_history: pBeHistory, be_ref: pBeRef };
+
+/* ---------- Approvers: Second Line Manager, Business Unit Director, CFO, CP ---------- */
+async function pApList() {
+  const [o, q, ag] = await Promise.all([sb.from("orders").select("id, order_no, arrived_at, route_state, file:order_file(uploaded_name), lines:order_line(id)").order("arrived_at", { ascending: false }), sb.rpc("ap_actionable_lines"), sb.from("order_ageing").select("*")]);
+  if (o.error) return fail(o.error); if (q.error) return fail(q.error);
+  const mine = {}; (q.data || []).forEach(r => { mine[r.order_id] = (mine[r.order_id] || 0) + 1; });
+  const age = Object.fromEntries((ag.data || []).map(a => [a.order_id, a]));
+  const rows = o.data.map(r => ({ ...r, mine: mine[r.id] || 0, age: age[r.id] })).sort((a, b) => (b.mine > 0) - (a.mine > 0));
+  return listPage({ title: "My approvals", cols: [{ h: "Order", f: r => r.order_no, cls: "id" }, { h: "File", f: r => r.file?.uploaded_name || "" }, { h: "Products", f: r => r.lines.length, num: true },
+      { h: "Status", f: r => r.mine ? pill(r.mine + " product(s) waiting for you", "warn") : statePill(r.route_state) }, { h: "Ageing", f: r => ageing(r.age) }, { h: "Arrived", f: r => dt(r.arrived_at), cls: "dim" }],
+    rows, search: r => [r.order_no, r.file?.uploaded_name].join(" "), searchHint: "Search by order or file...", onRow: r => go("ap_order", { id: r.id, no: r.order_no }), empty: "No orders are waiting for you." });
+}
+async function pApOrder() {
+  const { id, no } = route.args, reload = () => go("ap_order", route.args);
+  const { data: raw, error } = await sb.from("order_line").select(LINE_COLS_X).eq("order_id", id).order("file_row");
+  if (error) return fail(error);
+  if (!raw.length) return fail({ message: "Order not found." });
+  const lines = raw.map(mapLine), ids = raw.map(r => r.id);
+  const [oR, dcR, cmR, qR, agR, rtR, names] = await Promise.all([sb.from("orders").select("route_state, concern_type, concern_note, arrived_at, file:order_file(uploaded_name)").eq("id", id).single(),
+    sb.from("line_decision").select("*").in("line_id", ids).eq("superseded", false).order("decided_at"), sb.from("order_comment").select("*").eq("order_id", id).order("created_at", { ascending: false }),
+    sb.rpc("ap_actionable_lines", { p_order_id: id }), sb.from("order_ageing").select("*").eq("order_id", id).maybeSingle(),
+    sb.from("line_return").select("line_id, reason, returned_by_name, resolved_at").in("line_id", ids).is("resolved_at", null), userNames()]);
+  if (oR.error) return fail(oR.error);
+  const o = oR.data, decs = dcR.data || [], comments = cmR.data || [], act = new Map((qR.data || []).map(r => [r.line_id, r.stage])), openRet = new Set((rtR.data || []).map(r => r.line_id));
+  const decided = new Set(decs.filter(d => d.decision === "approved").map(d => d.line_id + ":" + d.stage));
+  const ctl = {};
+  const progress = l => {
+    const r = l.raw, nxt = nextStageOf(r, decided), bits = (r.required_stages || []).map(x => {
+      const d = decs.find(y => y.line_id === l.id && y.stage === x && y.decision === "approved");
+      return d ? pill(ROLE_SHORT[x] + " approved " + num(d.quantity), "ok") : pill(ROLE_SHORT[x], r.status === "In approval" && x === nxt ? "warn" : "info"); });
+    const rej = decs.find(y => y.line_id === l.id && y.decision === "rejected");
+    return el("div", { class: "stack" }, el("div", null, bits.length ? bits : "", rej ? pill(ROLE_SHORT[rej.stage] + " rejected", "err") : ""),
+      decs.filter(d => d.line_id === l.id && d.rationale).map(d => el("small", { class: "dim" }, ROLE_LABEL[d.stage] + " (" + d.decided_name + "): " + d.rationale)));
+  };
+  const decisionCell = l => {
+    if (!act.has(l.id)) return openRet.has(l.id) ? pill("Returned to Distribution Manager", "warn") : "";
+    const sel = el("select", null, el("option", { value: "" }, "No decision yet"), el("option", { value: "approve" }, "Approve"), el("option", { value: "reject" }, "Reject"), el("option", { value: "return" }, "Return to Distribution Manager"));
+    const qty = el("input", { type: "text", inputmode: "decimal", style: "width:90px", title: "Approved quantity (0 to the requested quantity)" }), why = el("input", { type: "text", placeholder: "Reason", style: "width:220px" });
+    qty.value = l.quantity; ctl[l.id] = { sel, qty, why };
+    const sync = () => { qty.hidden = sel.value !== "approve"; why.hidden = !(sel.value === "reject" || sel.value === "return"); }; sel.addEventListener("change", sync); sync();
+    return el("div", { class: "stack" }, el("small", { class: "dim" }, "Your stage: " + ROLE_LABEL[act.get(l.id)]), sel, qty, why);
+  };
+  const rat = el("textarea", { placeholder: "Rationale for your approval" }), submit = el("button", { class: "btn primary" }, "Submit decisions");
+  submit.addEventListener("click", async () => {
+    const dec = [];
+    for (const l of lines) {
+      const c = ctl[l.id]; if (!c || !c.sel.value) continue; const d = { line_id: l.id, decision: c.sel.value };
+      if (d.decision === "approve") { const q = c.qty.value.trim(); if (q === "" || !isFinite(Number(q)) || Number(q) < 0 || Number(q) > Number(l.quantity)) { say("Row " + l.file_row + ": the approved quantity must be between 0 and " + num(l.quantity) + ".", "err"); return; } d.quantity = Number(q); }
+      else { const w = c.why.value.trim(); if (!w) { say("Row " + l.file_row + ": a reason is required.", "err"); return; } d.reason = w; }
+      dec.push(d);
+    }
+    if (!dec.length) { say("Choose a decision for at least one product.", "err"); return; }
+    if (dec.some(d => d.decision === "approve" && act.get(d.line_id) === "second_line_manager") && !rat.value.trim()) { say("A rationale is required when the Second Line Manager approves.", "err"); return; }
+    submit.disabled = true;
+    const { error: e } = await sb.rpc("ap_decide", { p_order_id: id, p_decisions: dec, p_rationale: rat.value.trim() || null });
+    if (e) { say(e.message, "err"); submit.disabled = false; return; } reload();
+  });
+  const cmts = comments.length ? comments.map(c => el("div", { class: "cmt" }, el("small", null, (names[c.author] || "Back-End") + " · " + dtt(c.created_at) + (c.mentioned_name ? " · mentions " + c.mentioned_name : "")), c.body)) : [el("div", { class: "note" }, "No comments.")];
+  return [el("div", { class: "head" }, crumbs({ t: "My approvals", go: "ap_list" }, { t: "Order " + (no ?? "") }), statePill(o.route_state), ageing(agR.data), act.size ? submit : ""),
+    el("div", { class: "body" }, el("div", { class: "dim" }, [o.file?.uploaded_name || "", " · arrived ", dtt(o.arrived_at)].join("")), el("div", { class: "msg", id: "msg" }),
+      o.concern_type ? el("div", { class: "note" }, "Concern: " + o.concern_type + (o.concern_note ? " - " + o.concern_note : "")) : "",
+      act.size ? el("div", { class: "note" }, "Decide each product you own at this stage. Approve (quantity from 0 up to the requested quantity), reject with a reason, or return to the Distribution Manager with a reason. Products you leave without a decision stay with you.") : el("div", { class: "note" }, "Nothing is waiting for your decision on this order."),
+      el("h2", { class: "sec" }, "Products"),
+      linesTable(lines, [{ h: "Your decision", f: decisionCell }, { h: "Approval progress", f: progress }, { h: "Back-End inputs", f: l => inputsOf(l), cls: "wrap" }, { h: "Approved", f: l => outcomeOf(l) }]),
+      act.size ? [el("h2", { class: "sec" }, "Rationale"), el("div", { class: "dim" }, "Required when the Second Line Manager approves. Later approvers see it."), rat] : "",
+      el("h2", { class: "sec" }, "Comments"), cmts)];
+}
+
+/* ---------- Notifications (in the app; e-mail is not built) ---------- */
+const openOrder = (oid, no) => me.role === "distribution_manager" ? go("order", { id: oid, no, back: "orders" }) : me.role === "back_end_monitoring" ? go("be_order", { id: oid, no }) : go("ap_order", { id: oid, no });
+async function unreadBadge() {
+  const { count } = await sb.from("notification").select("id", { count: "exact", head: true }).is("read_at", null);
+  const t = document.querySelector('#nav a[data-k="notes"] .t'); if (t) t.textContent = "Notifications" + (count ? " (" + count + ")" : "");
+}
+async function pNotes() {
+  const { data, error } = await sb.from("notification").select("id, order_id, kind, message, created_at, read_at, order:orders(order_no)").order("created_at", { ascending: false }).limit(200);
+  if (error) return fail(error);
+  sb.rpc("mark_notifications_read").then(() => unreadBadge());
+  return listPage({ title: "Notifications", cols: [{ h: "When", f: r => dtt(r.created_at), cls: "dim" }, { h: "", f: r => r.read_at ? "" : pill("New", "info") }, { h: "Message", f: r => r.message, cls: "wrap" }],
+    rows: data, search: r => r.message, searchHint: "Search notifications...", onRow: r => r.order_id && openOrder(r.order_id, r.order?.order_no), empty: "No notifications." });
+}
+
+const PAGES = { orders: pOrders, returned: pReturned, drafts: pDrafts, upload: pUpload, order: pOrder, draft: pDraft, be_orders: pBeOrders, be_order: pBeOrder, be_history: pBeHistory, be_ref: pBeRef, ap_list: pApList, ap_order: pApOrder, notes: pNotes };
 const fail = e => [el("div", { class: "head" }, el("h1", null, "Something went wrong")), el("div", { class: "body" }, el("div", { class: "msg err" }, e.message))];
 
 async function draw() {
   const items = NAV[me.role] || [];
-  const parent = { order: "orders", draft: "drafts", upload: "orders", be_order: "be_orders" }[route.page] || route.page;
-  $("nav").replaceChildren(...items.map(([k, l, ic]) => el("a", { "aria-current": k === parent ? "page" : null, onclick: () => go(k) }, el("span", { class: "ic" }, ic), el("span", { class: "t" }, l))));
+  const parent = { order: "orders", draft: "drafts", upload: "orders", be_order: "be_orders", ap_order: "ap_list" }[route.page] || route.page;
+  $("nav").replaceChildren(...items.map(([k, l, ic]) => el("a", { "data-k": k, "aria-current": k === parent ? "page" : null, onclick: () => go(k) }, el("span", { class: "ic" }, ic), el("span", { class: "t" }, l))));
+  if (items.some(x => x[0] === "notes")) unreadBadge();
   const panel = $("panel");
   if (!items.length) { panel.replaceChildren(el("div", { class: "head" }, el("h1", null, "No screens for this role yet")), el("div", { class: "body" }, el("div", { class: "note" }, "This role has no screens in this build."))); return; }
   panel.replaceChildren(el("div", { class: "body" }, el("div", { class: "empty" }, "Loading...")));
